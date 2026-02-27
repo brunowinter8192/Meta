@@ -1,0 +1,6 @@
+.DS_Store
+.env
+.beads/
+.claude/
+Hooks_Reference/
+__pycache__/

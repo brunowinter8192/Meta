@@ -1,0 +1,17 @@
+{
+  "name": "brunowinter-plugins",
+  "owner": {
+    "name": "Bruno Winter"
+  },
+  "plugins": [
+    {
+      "name": "iterative-dev",
+      "source": {
+        "source": "github",
+        "repo": "brunowinter8192/Meta"
+      },
+      "description": "Iterative development cycle (PLAN-IMPLEMENT-RECAP-IMPROVE-CLOSING) with code-investigate agent",
+      "version": "1.0.0"
+    }
+  ]
+}
