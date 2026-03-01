@@ -50,7 +50,19 @@ echo "Syncing $PLUGIN_NAME v$VERSION..."
 echo "  From: $REPO_PATH"
 echo "  To:   $CACHE_DIR"
 
-rsync -av --filter=':- .gitignore' --exclude='.git' --delete \
+# Protect runtime artifacts in cache (venv, data, models) from deletion.
+# Only sync git-tracked source files + plugin config.
+rsync -av \
+    --exclude='.git' \
+    --exclude='venv/' --exclude='.venv/' \
+    --exclude='__pycache__/' --exclude='*.pyc' \
+    --exclude='.env' --exclude='.env.local' \
+    --exclude='.beads/' --exclude='.claude/' \
+    --exclude='.DS_Store' \
+    --exclude='data/' --exclude='debug/' \
+    --exclude='logs/' --exclude='*.log' \
+    --exclude='models/' --exclude='node_modules/' \
+    --delete \
     "$REPO_PATH/" "$CACHE_DIR/"
 
 # --- Update installed_plugins.json ---
