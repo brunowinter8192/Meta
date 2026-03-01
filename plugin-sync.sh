@@ -50,18 +50,12 @@ echo "Syncing $PLUGIN_NAME v$VERSION..."
 echo "  From: $REPO_PATH"
 echo "  To:   $CACHE_DIR"
 
-# Protect runtime artifacts in cache (venv, data, models) from deletion.
-# Only sync git-tracked source files + plugin config.
+# Use .gitignore to exclude untracked files from transfer.
+# Protect runtime artifacts (installed by /plugin install) from --delete.
 rsync -av \
+    --filter='P venv/' --filter='P .venv/' --filter='P node_modules/' \
+    --filter=':- .gitignore' \
     --exclude='.git' \
-    --exclude='venv/' --exclude='.venv/' \
-    --exclude='__pycache__/' --exclude='*.pyc' \
-    --exclude='.env' --exclude='.env.local' \
-    --exclude='.beads/' --exclude='.claude/' \
-    --exclude='.DS_Store' \
-    --exclude='data/' --exclude='debug/' \
-    --exclude='logs/' --exclude='*.log' \
-    --exclude='models/' --exclude='node_modules/' \
     --delete \
     "$REPO_PATH/" "$CACHE_DIR/"
 
