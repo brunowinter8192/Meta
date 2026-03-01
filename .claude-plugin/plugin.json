@@ -6,6 +6,6 @@
     "name": "Bruno Winter"
   },
   "keywords": ["iterative-dev", "development-cycle", "code-investigate", "agent"],
-  "skills": ["./skills/iterative-dev/", "./skills/agent-code-investigate/"],
+  "skills": ["./skills/iterative-dev/", "./skills/agent-code-investigate/", "./skills/plugin-dev/"],
   "agents": ["./agents/code-investigate-specialist.md"]
 }
