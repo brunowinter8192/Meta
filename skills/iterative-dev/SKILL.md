@@ -111,6 +111,13 @@ BEFORE you explore, clarify with the user:
 → "How does X use data from Y?"
 → Only when connections are clear: read DOCS.md
 
+**Question Pacing:**
+- Structure questions by topic steps, not as a single dump
+- 5 questions in one round is fine IF they are thematically coherent
+- Consider whether an answer to question N makes question N+1 obsolete — if so, ask sequentially
+- Do NOT ask one question per round when they are independent — that wastes exchanges
+- Do NOT overload the user with unrelated questions in a single block
+
 **EXCEPTION — Concrete Usecase First:**
 When user describes a concrete usecase ("verify these numbers", "run this workflow"), execute the usecase FIRST before asking scope questions. The concrete experience reveals the actual scope better than abstract discussion. AskUserQuestion only AFTER the usecase exposed gaps or decision points.
 
@@ -588,6 +595,8 @@ Only enter when user confirms (e.g., "proceed", "close", "done").
 ---
 
 ## Explore Agent (code-investigate-specialist)
+
+**This agent is part of the iterative-dev skill.** It is the ONLY agent used during the PLAN phase for codebase exploration. Always use `subagent_type="code-investigate-specialist"` — never use system agents (Explore, general-purpose, etc.) for codebase investigation.
 
 ### General Agent Rules
 
