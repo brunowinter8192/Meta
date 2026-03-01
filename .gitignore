@@ -1,8 +1,6 @@
 .DS_Store
 .env
 .beads/
-.claude/settings.local.json
-.claude/plans/
-.claude/.DS_Store
+.claude/
 Hooks_Reference/
 __pycache__/
