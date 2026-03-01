@@ -220,3 +220,92 @@ Additional steps:
 | Pre-commit hook not syncing | Hook overwritten by other tools (beads) | Manual sync or separate hook |
 | `/plugin install` doesn't update | Same version cached | Use `plugin-sync.sh` instead |
 | Plugin works in one project only | `scope: "local"` | Reinstall as `scope: "user"` or use `enabledPlugins` |
+
+---
+
+## LSP Plugins
+
+LSP (Language Server Protocol) plugins give Claude Code real-time code intelligence — go-to-definition, find-references, type checking, instant diagnostics after edits.
+
+### How LSP Plugins Work
+
+Unlike normal plugins (skills, agents, MCP servers), LSP plugins are **lightweight wrappers** around existing language server binaries. They contain:
+- A `.lsp.json` config file telling Claude Code which binary to run
+- A README and LICENSE
+- **No code** — the language server binary must be installed separately
+
+Claude Code connects to the language server via stdio and uses it for code navigation instead of grep-based text search.
+
+### Official LSP Plugins (Anthropic)
+
+Source: `anthropics/claude-plugins-official` (8.6k stars)
+
+| Plugin | Language | Binary Install |
+|--------|----------|----------------|
+| `pyright-lsp` | Python | `pipx install pyright` |
+| `typescript-lsp` | TypeScript/JS | `npm i -g typescript-language-server typescript` |
+| `gopls-lsp` | Go | `go install golang.org/x/tools/gopls@latest` |
+| `rust-analyzer-lsp` | Rust | `rustup component add rust-analyzer` |
+| `jdtls-lsp` | Java | `brew install jdtls` |
+| `clangd-lsp` | C/C++ | `brew install llvm` |
+| `csharp-lsp` | C# | `dotnet tool install -g csharp-ls` |
+| `kotlin-lsp` | Kotlin | — |
+| `lua-lsp` | Lua | — |
+| `php-lsp` | PHP | — |
+| `swift-lsp` | Swift | — |
+
+### Installation
+
+1. Install the language server binary (e.g., `pipx install pyright`)
+2. Claude Code auto-detects `.py` files + `pyright-langserver` on PATH → prompts to install LSP plugin
+3. Accept the prompt, restart Claude Code
+
+### Creating Custom LSP Plugins
+
+Add `.lsp.json` to plugin root (or inline as `lspServers` in `plugin.json`):
+
+```json
+{
+  "python": {
+    "command": "pyright-langserver",
+    "args": ["--stdio"],
+    "extensionToLanguage": {
+      ".py": "python",
+      ".pyi": "python"
+    }
+  }
+}
+```
+
+**Required fields:**
+
+| Field | Description |
+|-------|-------------|
+| `command` | LSP binary to execute (must be in PATH) |
+| `extensionToLanguage` | Maps file extensions to language identifiers |
+
+**Optional fields:**
+
+| Field | Description |
+|-------|-------------|
+| `args` | Command-line arguments for the LSP server |
+| `transport` | `stdio` (default) or `socket` |
+| `env` | Environment variables for the server |
+| `initializationOptions` | Options passed during server initialization |
+| `settings` | Settings passed via `workspace/didChangeConfiguration` |
+| `startupTimeout` | Max wait for server startup (ms) |
+| `shutdownTimeout` | Max wait for graceful shutdown (ms) |
+| `restartOnCrash` | Auto-restart on crash (boolean) |
+| `maxRestarts` | Max restart attempts |
+
+### Standalone LSP (Without Plugin)
+
+Place `.lsp.json` directly in the project root for project-scoped LSP support without creating a full plugin. Claude Code discovers it automatically.
+
+### Performance Impact
+
+| | Without LSP (grep) | With LSP |
+|---|---|---|
+| Code navigation | 30-60 seconds | ~50ms |
+| Accuracy | Fuzzy text matches | Exact semantic matches |
+| Error detection | Manual | Instant after each edit |
