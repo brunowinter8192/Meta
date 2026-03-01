@@ -7,5 +7,5 @@
   },
   "keywords": ["iterative-dev", "development-cycle", "code-investigate", "agent"],
   "skills": ["./skills/iterative-dev/", "./skills/agent-code-investigate/"],
-  "agents": "./agents/code-investigate-specialist.md"
+  "agents": ["./agents/code-investigate-specialist.md"]
 }
