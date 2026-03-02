@@ -20,7 +20,10 @@ Follow this order. Do NOT skip steps.
 3. **Follow imports** - If code imports from external modules, locate and READ those files
 4. **Sample one** - If many similar files exist, read ONE example first
 5. **Targeted search** - Then grep/glob for specific patterns
-6. **Report locations** - Output FILE/LINES/RELEVANT blocks
+   - ALWAYS exclude: `.venv`, `venv`, `node_modules`, `__pycache__`, `.git`
+   - Use: `find <path> -name "*.md" -not -path "*venv*" -not -path "*node_modules*" -not -path "*__pycache__*"`
+6. **No redundant reads** - If `find` already listed a directory's contents, do NOT run `ls` on the same directory. Use information you already have.
+7. **Report locations** - Output FILE/LINES/RELEVANT blocks
 
 ## CRITICAL: Evidence Verification
 
@@ -37,6 +40,8 @@ Follow this order. Do NOT skip steps.
 ## CRITICAL: Output Format
 
 **ONLY output this format. NOTHING ELSE.**
+
+**FORBIDDEN:** Do NOT write summaries, explanations, or prose after the FILE blocks. No "## Summary", no bullet point lists, no tables. Your response ends after the last FILE block.
 
 ```
 FILE: <absolute path>
