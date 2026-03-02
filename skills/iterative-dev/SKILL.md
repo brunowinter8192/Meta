@@ -7,57 +7,17 @@ description: (project)
 
 ## Task Management Hierarchy
 
-- **Beads** (`.beads/`) - Cross-session (weeks/months)
+- **Beads** (`.beads/`) - Cross-session (days/weeks/months). Rules and formats in `~/.claude/CLAUDE.md`
 - **Plan-File** (`.claude/plans/`) - Within a session (hours)
 - **TodoWrite** - Within an iteration (minutes)
 
-### Beads CLI Gotchas
+### Beads (MANDATORY)
 
-**`bd edit --title`** opens vim (interactive) → **FAILS in Claude Code**
+Rules, types, and content requirements: `~/.claude/CLAUDE.md`
 
-**Workarounds:**
-- Rename scope? → `bd comment <id> "New scope: ..."`
-- Merge beads? → `bd close <id> --reason="Merged into <other-id>"`
-- Create with full info: `bd create --title "..." --type=... --description="..."`
+Beads are **always active** — not tied to specific phases. After every significant action (file changed, decision made, bug found, scope change), comment the relevant bead immediately. Don't batch comments for phase transitions.
 
-**Commands that WORK:**
-- `bd list -s open` / `bd show <id>` (default: only open beads)
-- `bd list -s closed` (closed beads - only when user explicitly requests closed)
-- **CAUTION:** `bd list` without flags also shows only OPEN beads (same as `-s open`)
-- `bd create --title "..." --type=...`
-- `bd comment <id> "..."`
-- `bd close <id> --reason="..."`
-- `bd sync`
-
-### Bead Content Requirements
-
-**CRITICAL:** Beads are cross-session. A new session has NO context.
-
-**Rule:** Every bead MUST contain enough information to understand it WITHOUT the original session context.
-
-**On Create:**
-- `--description` is MANDATORY for non-trivial beads
-- Description answers: What? Why? Where? (files/modules affected)
-- Bad: `--title "Fix bug"` (useless in new session)
-- Good: `--title "Fix NaN in search scores" --description="search_workflow returns NaN when query has no matches. Affects src/rag/retriever.py"`
-
-**On Update:**
-- "Updating a bead" means: `bd comment <id> "..."` — ALWAYS via comments, NEVER by editing the description
-- The description is the initial snapshot. All progress lives in comments.
-- Each comment should be self-contained (not "fixed it" but "fixed by adding null check in line 42")
-- A bead without comments after a session = bead was neglected
-
-**On Close:**
-- `--reason` must explain WHAT was done, not just "done"
-- Bad: `--reason="Fixed"`
-- Good: `--reason="Added null check in retriever.py:42, now returns empty list instead of NaN"`
-
-**Stale Bead = Broken Bridge:**
-- A bead with outdated checklists or wrong status is WORSE than no bead — it actively misleads.
-- When work is done but bead still shows `[ ]` → next session wastes time investigating "open" items that are already complete.
-- **Rule:** Every IMPLEMENT completion → update corresponding bead checklists BEFORE moving to RECAP.
-
-**Test:** Can someone in a new session understand this bead without asking?
+**Session start:** `bd list -s open` → read relevant work beads. No bead for current work → create one before starting.
 
 ## CRITICAL CYCLE
 
@@ -423,21 +383,21 @@ Identify situations where agent should have been used but wasn't:
 
 Run `bd list -s open` to check open beads, then evaluate:
 
-##### 5.1 New Beads
+##### 5.1 Active Beads
 
-Discovered work that should be tracked cross-session?
-- List candidates with proposed title/type
+For each open bead touched this cycle:
+- Was it commented after every significant action? If not → note the gap
+- Is the latest comment sufficient for a fresh session to continue? If not → add comment in IMPROVE
 
-##### 5.2 Update Existing Beads
+##### 5.2 New Beads
 
-For each open bead worked on this session:
-- Progress made?
-- New blockers/dependencies?
-- Comments to add?
+Discovered work that needs cross-session tracking?
+- List candidates with proposed title and description
+- Title = topic, not date (e.g., "LSP Integration" not "Session 02.03")
 
 ##### 5.3 Close Completed Beads
 
-For each bead completed this session:
+For each bead where the topic is fully resolved:
 - Mark for closing with reason
 
 **Format:** `<id>: <reason>`
