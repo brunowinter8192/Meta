@@ -374,6 +374,12 @@ Identify situations where agent should have been used but wasn't:
 - Pipeline tracing (input → output)
 - When hook requests it
 
+**Domain Skill Compliance Check (MANDATORY):**
+For each active domain skill (reddit, github, etc.):
+- Was the subagent dispatched when dispatch rules required it?
+- If not: why? (single lookup = OK, multi-query research without sub = NOT OK)
+- This catches the pattern: "I did it myself instead of dispatching" — which bypasses the skill's Dispatch First → Verify workflow
+
 **When NOT to Use Agent (do it yourself):**
 - Direct reads of known paths
 - Verification after agent output
