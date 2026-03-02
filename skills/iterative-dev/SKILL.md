@@ -449,6 +449,11 @@ Prioritization (by OUTCOME):
 - In IMPROVE: Execute that change. No exceptions.
 - "Lesson Learned" that stays only in the RECAP report = FAILURE
 
+**READ BEFORE PROPOSING (MANDATORY):**
+- Before proposing ANY process improvement, READ the target automation file first
+- You need to see what's already there to propose a meaningful change
+- Without reading: you guess where it goes and what already exists → wrong proposal
+
 ##### 6.3 DOCS.md Check (MANDATORY)
 
 **ALWAYS explicitly answer:**
@@ -523,7 +528,12 @@ Location: [Automation File + file path]
    - If any new output was generated → update DOCS.md
 3. For each other improvement (see 6.1/6.2 Handling):
    - **Code?** → `bd create --title "..." --type=...`
-   - **Automation Files?** → Direct Edit (Edit, Write)
+   - **Automation Files?** → Edit workflow:
+     1. READ the target file fully
+     2. SEARCH for overlapping rules/sections
+     3. If overlap: EXTEND existing section with new content
+     4. If no overlap: ADD new section, keeping all existing sections untouched
+     5. If restructuring needed: MOVE text, never delete it
 4. Handle Beads (from RECAP Section 5):
    - Create: `bd create --title "..." --type=...`
    - Update: `bd comment <id> "..."`
