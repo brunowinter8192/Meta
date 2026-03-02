@@ -484,9 +484,23 @@ List any tasks from the original plan that were NOT executed.
 - Rationale: New session = zero context. Beads preserve continuity.
 - Test: After CLOSING, could someone pick up this work with ONLY the Bead info?
 
+### Presenting Improvements
+
+**BEFORE asking "Any remarks?":** List all Process Improvements from Section 6.2 in chat text. The user cannot see the plan file content — they only see what you write in chat. Improvements buried in the plan file are invisible.
+
+**Format in chat:**
+```
+**Improvement N: [Title]**
+- **File:** [path]
+- **Section:** [section name]
+- **Change:** [what to add/modify]
+```
+
+**Automation File Rule:** BEFORE proposing WHERE an improvement goes, READ the target automation file. Decide placement based on actual content, not assumptions about what's in there.
+
 ### Collecting Improvements
 
-After report:
+After presenting improvements:
 1. Ask: "Any remarks?"
 2. User gives remark → **Analyze for system improvement**
 3. Ask: "More remarks?"
