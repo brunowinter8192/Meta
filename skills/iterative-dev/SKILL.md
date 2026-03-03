@@ -195,6 +195,14 @@ When fixing bugs or making code changes involving system behavior (terminal esca
 - "The API returns X" without having seen it
 - Planning isinstance/type checks without knowing the actual type
 - First verification attempt fails (e.g. auth error) and you proceed anyway
+- Plan says "no code change needed" without thinking through edge cases
+
+**"No Code Change" Plans (MANDATORY):**
+When your plan concludes "existing code handles this, just run it":
+1. Ask: What happens at the BOUNDARY between existing data and new data?
+2. Ask: What failure modes exist? (overlaps, gaps, duplicates, ordering)
+3. Ask: Has this exact scenario been tested before, or am I the first?
+If ANY answer is uncertain → plan a verification step BEFORE declaring "no code change needed".
 
 ### Execution During Planning
 
@@ -486,17 +494,9 @@ List any tasks from the original plan that were NOT executed.
 - Rationale: New session = zero context. Beads preserve continuity.
 - Test: After CLOSING, could someone pick up this work with ONLY the Bead info?
 
-### Presenting Improvements
+### Presenting Process Improvements
 
-**BEFORE asking "Any remarks?":** List all Process Improvements from Section 6.2 in chat text. The user cannot see the plan file content — they only see what you write in chat. Improvements buried in the plan file are invisible.
-
-**Format in chat:**
-```
-**Improvement N: [Title]**
-- **File:** [path]
-- **Section:** [section name]
-- **Change:** [what to add/modify]
-```
+**Section 6.2 Process Improvements MUST appear in BOTH the plan file AND in chat text.** The user cannot see the plan file — improvements only in the plan file are invisible to them.
 
 **Automation File Rule:** BEFORE proposing WHERE an improvement goes, READ the target automation file. Decide placement based on actual content, not assumptions about what's in there.
 

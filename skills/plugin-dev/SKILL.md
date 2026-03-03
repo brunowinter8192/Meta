@@ -209,12 +209,41 @@ Additional steps:
 
 ---
 
+## Agent Tool Name Matching (CRITICAL)
+
+Agent frontmatter `tools:` MUST list the ACTUAL registered tool names — not assumed names.
+
+**How tool names are generated:**
+- Explicit `mcpServers` in plugin.json with `"name": "reddit"` → `mcp__reddit__<tool>`
+- No explicit mcpServers (auto-generated) → `mcp__plugin_<plugin-name>_<server-name>__<tool>`
+
+**The agent must match whichever format is actually registered.** Check with `/context` → MCP tools section.
+
+**Failure mode:** Mismatched tool names → agent gets 0 tool access → hallucinated output (no errors, just fabricated results). This is silent and hard to detect.
+
+**Format:** YAML list with `-` prefix, NOT comma-separated.
+
+```yaml
+# CORRECT
+tools:
+  - mcp__plugin_reddit_reddit__search_posts
+  - mcp__plugin_reddit_reddit__get_post_comments
+
+# WRONG (comma-separated, old format)
+tools: mcp__reddit__search_posts, mcp__reddit__get_post_comments
+```
+
+**After any change to plugin.json mcpServers or .mcp.json:** Verify agent tool names still match registered names. Run `/context` to check.
+
+---
+
 ## Common Errors
 
 | Error | Cause | Fix |
 |-------|-------|-----|
 | Command not in `/context` | Cache outdated | `plugin-sync.sh` |
 | Ugly tool names (`mcp__plugin_...`) | Minimal plugin.json, no explicit mcpServers | Add explicit `mcpServers` field |
+| Agent makes 0 tool calls, hallucinates | Agent `tools:` list has wrong tool names | Check `/context`, update agent frontmatter to match |
 | Source deleted, only distribution exists | Accidental deletion, no backup | Restore from distribution copy |
 | Plugin.json missing new command | Forgot to add to `commands` array | Update plugin.json |
 | Pre-commit hook not syncing | Hook overwritten by other tools (beads) | Manual sync or separate hook |
