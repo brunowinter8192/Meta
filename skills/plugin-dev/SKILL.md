@@ -155,6 +155,31 @@ Key fields:
 
 **ALWAYS use `plugin-sync.sh` for development.**
 
+### MCP Server Processes
+
+Plugin MCP servers run as background processes spawned by Claude Code. Each CC window can spawn its own instance. They run from the **cache**, not from the source repo.
+
+**Find running MCP servers:**
+```bash
+ps aux | grep "fastmcp" | grep -v grep
+```
+
+**Kill a specific plugin's MCP server:**
+```bash
+pkill -f "fastmcp.*<plugin-name>"
+```
+
+**Kill all plugin MCP servers:**
+```bash
+pkill -f "fastmcp.*plugins/cache"
+```
+
+**Why this matters:**
+- MCP servers load tools at startup from cache
+- After `plugin-sync.sh`, running servers still have OLD code
+- Must kill old servers so next CC session starts fresh ones
+- Multiple CC windows = multiple server instances (all need killing)
+
 ---
 
 ## Plugin Scope Management
