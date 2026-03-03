@@ -447,7 +447,9 @@ If yes → a Continuation-Bead MUST be created in IMPROVE phase:
 
 #### 6. Improvements
 
-**CRITICAL:** Every improvement MUST reference an Automation File.
+**CRITICAL:** Every Process Improvement MUST reference an exact Automation File path + section.
+Format: `[Description] → [Automation File path] → [Section to add/extend]`
+Example: `API-Endpoints verifizieren → ~/.claude/CLAUDE.md → "Verify Before Execution"`
 Improvements without concrete target path are not actionable → reject.
 
 **Automation File Categories:**
@@ -479,8 +481,11 @@ Prioritization (by OUTCOME):
 
 **Handling in IMPROVE Phase:**
 - Automation Files (Skills, Commands, Agents, Hooks) → **Direct Edit** in IMPROVE
-- Docs/README → **Direct Edit** in IMPROVE
 - Code → **Bead**
+
+**CRITICAL: Process Improvements = Automation Files ONLY.**
+Docs/README are Content Improvements (6.1), never Process Improvements.
+If an "improvement" targets a DOCS.md or README → it belongs in 6.1, not here.
 
 **Key insight:** OUTCOME determines severity. Wrong process + correct result = Important (not Critical).
 
