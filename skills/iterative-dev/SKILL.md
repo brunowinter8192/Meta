@@ -73,6 +73,11 @@ BEFORE you explore, clarify with the user:
 → "How does X use data from Y?"
 → Only when connections are clear: read DOCS.md
 
+**4. REFERENCES - Is there an existing pattern to follow?**
+→ "Is there an existing pattern in your other projects we should follow?"
+→ Especially for testing, debug, infrastructure tasks
+→ User's existing patterns beat generic best practices (e.g., scraping suite > unit tests for web scrapers)
+
 **Question Pacing:**
 - Structure questions by topic steps, not as a single dump
 - 5 questions in one round is fine IF they are thematically coherent
@@ -191,11 +196,19 @@ When fixing bugs or making code changes involving system behavior (terminal esca
 
 **Debug scripts** go in `debug/` folder when verification needs more than a one-liner.
 
+**Testing/Debug Tasks (MANDATORY):**
+Before proposing a test framework or debug approach, ask:
+→ "What is the real risk we need to catch?"
+→ Match the testing approach to the actual failure mode
+→ Quantity (76 tests) != Quality (catches the right risk)
+→ Example: Unit tests against static HTML fixtures don't catch the real risk for web scrapers (HTML structure changes). A scraping suite with live baselines + regression detection does.
+
 **Red Flags:**
 - "The API returns X" without having seen it
 - Planning isinstance/type checks without knowing the actual type
 - First verification attempt fails (e.g. auth error) and you proceed anyway
 - Plan says "no code change needed" without thinking through edge cases
+- Proposing a test pattern without asking "what failure mode does this actually catch?"
 
 **"No Code Change" Plans (MANDATORY):**
 When your plan concludes "existing code handles this, just run it":
