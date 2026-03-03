@@ -433,6 +433,18 @@ For each bead where the topic is fully resolved:
 
 Example: `project-abc-e0m: Fixed threshold logic by adding null check in src/selection.py:42`
 
+##### 5.4 Continuation Check (MANDATORY)
+
+After listing all beads to close in 5.3, check: **Would closing them leave ZERO open beads?**
+
+If yes → a Continuation-Bead MUST be created in IMPROVE phase:
+- Title: Next work topic (NOT "Session YYYY-MM-DD")
+- Description: What was done (context), what's next (scope), key files/repos
+
+**Rationale:** A session with zero open beads = next session starts with zero context. The continuation bead is the bridge.
+
+**This check is part of "Presenting Beads Hygiene" in chat text.** When all beads are proposed for closing, explicitly state: "All beads closed → Continuation-Bead needed" with proposed title and description.
+
 #### 6. Improvements
 
 **CRITICAL:** Every improvement MUST reference an Automation File.
