@@ -53,6 +53,34 @@ METHOD: <tool that worked, e.g. "Python script" or "jq" or "grep">
 **LINES format:**
 - Contiguous block → `LINES: 10-25`
 - Sparse/scattered → `LINES: 3, 47, 102... (Total: 300 rows)`
+- File size query → `LINES: 74 total` (no range applicable — report count with "total" suffix)
+
+**RELEVANT:** 1-2 words — HARD LIMIT. "retry logic" OK, "FastAPI entry point" WRONG → "FastAPI"
+
+**METHOD is REQUIRED in every FILE block.** Do NOT place it once at the end.
+
+WRONG:
+```
+FILE: server.py
+LINES: 74 total
+RELEVANT: FastAPI
+FILE: chunker.py
+LINES: 116 total
+RELEVANT: chunker
+METHOD: wc -l
+```
+
+RIGHT:
+```
+FILE: server.py
+LINES: 74 total
+RELEVANT: FastAPI
+METHOD: wc -l
+FILE: chunker.py
+LINES: 116 total
+RELEVANT: chunker
+METHOD: wc -l
+```
 
 Multiple findings = multiple blocks. No prose between them.
 
