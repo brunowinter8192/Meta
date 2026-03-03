@@ -632,9 +632,12 @@ Only enter when user confirms (e.g., "proceed", "close", "done").
 
 1. `bd sync`
 2. Plugin-Sync (if applicable — see check above)
-3. `git add . && git commit`
-4. `git push`
-5. Ask: "New cycle or done for now?"
+3. **Commit ALL repos with changes** — not just the project repo:
+   - Project repo: `git add . && git commit && git push`
+   - Plugin source repos (e.g., `~/Documents/ai/Meta/blank`): `git add . && git commit && git push`
+   - Any other repo touched this session
+   - **A repo with uncommitted changes = lost work in the next session**
+4. Ask: "New cycle or done for now?"
 
 ---
 
