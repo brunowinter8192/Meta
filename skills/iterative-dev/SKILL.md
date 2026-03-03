@@ -606,10 +606,18 @@ Only enter when user confirms (e.g., "proceed", "close", "done").
 - If ANY Open Item has no Bead → CREATE IT NOW before proceeding
 - This check is NON-NEGOTIABLE
 
+**PLUGIN-SYNC CHECK (MANDATORY):**
+- Were ANY plugin-distributed files edited this session? (Skills, Agents, Commands, server.py, src/ modules)
+- Check: Does the current project have a `plugin-sync.sh` entry? (see `~/.claude/CLAUDE.md` Plugin Cache Management)
+- If YES → run `plugin-sync.sh <plugin-name> <repo-path>` BEFORE commit
+- If NO → skip
+- **Without sync: edited Skills/Agents/Tools stay in source repo but never reach the plugin cache. The MCP server runs from cache — unsyncronized changes are invisible to Claude Code.**
+
 1. `bd sync`
-2. `git add . && git commit`
-3. `git push`
-4. Ask: "New cycle or done for now?"
+2. Plugin-Sync (if applicable — see check above)
+3. `git add . && git commit`
+4. `git push`
+5. Ask: "New cycle or done for now?"
 
 ---
 
