@@ -17,7 +17,7 @@ Rules, types, and content requirements: `~/.claude/CLAUDE.md`
 
 Beads are **always active** — not tied to specific phases. After every significant action (file changed, decision made, bug found, scope change), comment the relevant bead immediately. Don't batch comments for phase transitions.
 
-**MANDATORY: After every `git commit`, immediately `bd comment <bead-id>` with what was changed and why.** A commit without a bead comment = lost context. This is the minimum granularity — no exceptions.
+**MANDATORY: After every `git commit`, immediately `bd comments add <bead-id>` with what was changed and why.** A commit without a bead comment = lost context. This is the minimum granularity — no exceptions.
 
 **Session start:** `bd list -s open` → read relevant work beads. No bead for current work → create one before starting.
 
@@ -542,7 +542,7 @@ For each open bead:
 
 **Section 6.2 Process Improvements MUST appear in BOTH the plan file AND in chat text.** The user cannot see the plan file — improvements only in the plan file are invisible to them.
 
-**Automation File Rule:** BEFORE proposing WHERE an improvement goes, READ the target automation file. Decide placement based on actual content, not assumptions about what's in there.
+**Automation File Rule (CRITICAL):** BEFORE proposing WHERE an improvement goes, READ the target automation file. Decide placement based on actual content, not assumptions about what's in there. This means: read ALL target files DURING RECAP, BEFORE writing the Improvements section — not after presenting it to the user.
 
 ### Collecting Improvements
 
@@ -602,7 +602,7 @@ Location: [Automation File + file path]
      5. If restructuring needed: MOVE text, never delete it
 4. Handle Beads (from RECAP Section 5):
    - Create: `bd create --title "..." --type=...`
-   - Update: `bd comment <id> "..."`
+   - Update: `bd comments add <id> "..."`
    - Close: `bd close <id> --reason="..."`
 5. **Handle Open Items (MANDATORY - EMPTY PLATE RULE):**
    - For EACH Open Item from RECAP Section 7:
@@ -630,7 +630,7 @@ Only enter when user confirms (e.g., "proceed", "close", "done").
 - If NO → skip
 - **Without sync: edited Skills/Agents/Tools stay in source repo but never reach the plugin cache. The MCP server runs from cache — unsyncronized changes are invisible to Claude Code.**
 
-1. `bd sync`
+1. `bd export` (JSONL export — replaces old `bd sync`)
 2. Plugin-Sync (if applicable — see check above)
 3. **Commit ALL repos with changes** — not just the project repo:
    - Project repo: `git add . && git commit && git push`
