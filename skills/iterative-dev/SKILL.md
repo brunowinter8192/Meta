@@ -507,6 +507,20 @@ List any tasks from the original plan that were NOT executed.
 - Rationale: New session = zero context. Beads preserve continuity.
 - Test: After CLOSING, could someone pick up this work with ONLY the Bead info?
 
+### Presenting Beads Hygiene
+
+**Section 5 Beads Hygiene MUST appear in BOTH the plan file AND in chat text.** The user cannot see the plan file — beads status only in the plan file is invisible to them.
+
+**Format in chat (BEFORE Process Improvements):**
+
+For each open bead:
+```
+**<id>** (<title>) — <ACTIVE or CLOSE vorgeschlagen>
+- Stand: <last comment summary>
+- Kommentiert diese Session: JA/NEIN
+- Reason (if close): <why>
+```
+
 ### Presenting Process Improvements
 
 **Section 6.2 Process Improvements MUST appear in BOTH the plan file AND in chat text.** The user cannot see the plan file — improvements only in the plan file are invisible to them.
