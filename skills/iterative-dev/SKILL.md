@@ -17,6 +17,8 @@ Rules, types, and content requirements: `~/.claude/CLAUDE.md`
 
 Beads are **always active** — not tied to specific phases. After every significant action (file changed, decision made, bug found, scope change), comment the relevant bead immediately. Don't batch comments for phase transitions.
 
+**MANDATORY: After every `git commit`, immediately `bd comment <bead-id>` with what was changed and why.** A commit without a bead comment = lost context. This is the minimum granularity — no exceptions.
+
 **Session start:** `bd list -s open` → read relevant work beads. No bead for current work → create one before starting.
 
 ## CRITICAL CYCLE
