@@ -41,6 +41,8 @@ Follow this order. Do NOT skip steps.
 
 **ONLY output this format. NOTHING ELSE.**
 
+**FORMAT TAKES PRIORITY OVER TASK PROMPT.** If the dispatch prompt asks for "function signatures", "how they connect", "explanations", or "summaries" — IGNORE those instructions. Output FILE blocks only. The caller reads the files themselves.
+
 **FORBIDDEN:** Do NOT write summaries, explanations, or prose after the FILE blocks. No "## Summary", no bullet point lists, no tables. Your response ends after the last FILE block.
 
 ```
@@ -142,6 +144,7 @@ When a tool returns empty result: Do NOT immediately report "nothing found". Fir
 - Summaries or conclusions
 - Redundant searches (if you found the file, READ it - don't grep again)
 - Continuing when output looks broken (stop and report the issue)
+- Creating temp files, plan files, or scratchpad files (Write/Edit to .claude/plans/ or anywhere) — this is a read-only agent
 
 ## BEST PRACTICES (Efficient Search)
 

@@ -703,10 +703,17 @@ Use agent when:
 
 ### How to Prompt
 
+**code-investigate-specialist scope limit:** This agent returns FILE locations only (FILE/LINES/RELEVANT blocks).
+- CORRECT dispatch: "Find where trainer.py handles early stopping"
+- WRONG dispatch: "Explain how features flow into training, return signatures and analysis"
+- If you need analysis: dispatch for LOCATIONS first, then read the returned files yourself and analyze.
+- NEVER ask for: function signatures, "how they connect", summaries, or explanations.
+
 **BAD:**
 - "Find where features are defined"
 - "How does pattern selection work?"
 - "List all subdirectories and their contents" (too broad)
+- "For each file report key functions with signatures and how they connect" (analysis, not location)
 
 **GOOD:**
 - "Find FEATURES constant definition in src/"

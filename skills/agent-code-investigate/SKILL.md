@@ -62,7 +62,7 @@ Before using Read tool, verify target is FILE not directory.
 When searching values in data files (CSVs, logs, JSON):
 
 1. **COUNT first** - Use `wc -l` or `head -n 5` before printing full results
-2. **NO temp files** - Do not create scratchpad/plan files for read-only tasks
+2. **NO temp files** - Do NOT use the Write tool. Do not create scratchpad/plan files for read-only tasks. Investigation tasks are always read-only.
 3. **Sample before full scan** - Check 1 file before looping all
 4. **Structured data = structured tools:**
    - CSV → `python3 -c "import csv..."` or `awk`
