@@ -642,8 +642,10 @@ Only enter when user confirms (e.g., "proceed", "close", "done").
 - **Without sync: edited Skills/Agents/Tools stay in source repo but never reach the plugin cache. The MCP server runs from cache — unsyncronized changes are invisible to Claude Code.**
 
 **EVAL CLEANUP (MANDATORY):**
-- Delete all files in `Evaluation_Proposals/` — reports were read and processed in RECAP, no longer needed
-- `rm -f Evaluation_Proposals/*.md`
+- Delete ONLY the reports that were read and processed in THIS session's RECAP
+- Track which agent IDs were processed during RECAP — delete only those
+- `rm -f Evaluation_Proposals/<agent_id_1>.md Evaluation_Proposals/<agent_id_2>.md`
+- NEVER `rm -f Evaluation_Proposals/*.md` — other sessions may have unprocessed reports
 
 1. `bd export` (JSONL export — replaces old `bd sync`)
 2. Plugin-Sync (if applicable — see check above)
