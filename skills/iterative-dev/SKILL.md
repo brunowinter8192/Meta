@@ -453,11 +453,16 @@ Example: `API-Endpoints verifizieren → ~/.claude/CLAUDE.md → "Verify Before 
 Improvements without concrete target path are not actionable → reject.
 
 **Automation File Categories:**
-1. `~/.claude/CLAUDE.md` (global — always)
-2. `CLAUDE.md` (project — always)
+1. `~/.claude/CLAUDE.md` (global — applies to ALL projects)
+2. `<project>/CLAUDE.md` (project — applies to THIS project only)
 3. Plugin files — see **Global Plugins** registry in `~/.claude/CLAUDE.md`
 4. `.claude/commands/*.md` (project slash commands)
 5. `~/.claude/scripts/` (hooks)
+
+**Path Clarity (CRITICAL):** Always use FULL paths to distinguish global from project:
+- Global: `~/.claude/CLAUDE.md`
+- Project: `<project>/CLAUDE.md` or `CLAUDE.md (project)`
+- NEVER write just `CLAUDE.md` without qualifier — ambiguous which one is meant
 
 **Discovery:** Run `find ~/.claude/plugins/cache/brunowinter-plugins/ -name "plugin.json"` to locate plugin source paths.
 
@@ -488,6 +493,12 @@ Docs/README are Content Improvements (6.1), never Process Improvements.
 If an "improvement" targets a DOCS.md or README → it belongs in 6.1, not here.
 
 **Key insight:** OUTCOME determines severity. Wrong process + correct result = Important (not Critical).
+
+**Recurring vs One-Off (CRITICAL):**
+- Automation Files are for RECURRING issues that need persistent rules
+- One-off problems (single edge case, one-time fix) do NOT belong in Automation Files
+- Ask: "Will this issue come up again across multiple sessions/projects?" → YES = Automation File, NO = skip
+- Polluting Automation Files with one-off rules degrades their signal-to-noise ratio
 
 **CRITICAL: Every process error MUST produce a config change.**
 - Identified process error without config change = wasted insight, error WILL repeat
@@ -629,6 +640,10 @@ Only enter when user confirms (e.g., "proceed", "close", "done").
 - If YES → run `plugin-sync.sh <plugin-name> <repo-path>` BEFORE commit
 - If NO → skip
 - **Without sync: edited Skills/Agents/Tools stay in source repo but never reach the plugin cache. The MCP server runs from cache — unsyncronized changes are invisible to Claude Code.**
+
+**EVAL CLEANUP (MANDATORY):**
+- Delete all files in `Evaluation_Proposals/` — reports were read and processed in RECAP, no longer needed
+- `rm -f Evaluation_Proposals/*.md`
 
 1. `bd export` (JSONL export — replaces old `bd sync`)
 2. Plugin-Sync (if applicable — see check above)
