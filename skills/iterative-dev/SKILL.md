@@ -85,6 +85,18 @@ BEFORE you explore, clarify with the user:
 - Do NOT ask one question per round when they are independent — that wastes exchanges
 - Do NOT overload the user with unrelated questions in a single block
 
+**Session-Scope First (CRITICAL):**
+- BEFORE asking about features, architecture, or sources: ask "What is the scope of THIS SESSION?"
+- User often has a bigger vision but wants to tackle one piece now
+- Don't brainstorm the full feature — ask what's actionable TODAY
+- If user describes a multi-step vision: "Which part do we do now?"
+
+**Scope-Pivot Rule:**
+- When user corrects your scope understanding 2+ times → STOP
+- Summarize: "So: [X] and only [X], correct?" — then wait for confirmation
+- Do NOT continue asking questions after 2 corrections — you're clearly misreading the intent
+- Each correction is a signal that you're thinking too broadly
+
 **EXCEPTION — Concrete Usecase First:**
 When user describes a concrete usecase ("verify these numbers", "run this workflow"), execute the usecase FIRST before asking scope questions. The concrete experience reveals the actual scope better than abstract discussion. AskUserQuestion only AFTER the usecase exposed gaps or decision points.
 
@@ -367,6 +379,20 @@ Evaluate current hooks for improvements:
 #### 4. Agent Evaluation
 
 Evaluate subagent usage during the cycle (if agents were used).
+
+##### Eval Reports (Orchestrator)
+
+**BEFORE manual evaluation:** Check `Evaluation_Proposals/` for automated eval reports.
+
+```bash
+ls Evaluation_Proposals/*.md 2>/dev/null
+```
+
+If reports exist:
+1. Read each report
+2. Integrate findings into the sections below (Output Quality, What Helped, What Could Be Better)
+3. Add eval-report proposals to Section 6.2 Process Improvements if actionable
+4. Track which report files were read (needed for CLOSING cleanup)
 
 ##### Output Quality
 
