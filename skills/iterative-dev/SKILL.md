@@ -459,6 +459,19 @@ For each bead where the topic is fully resolved:
 
 Example: `project-abc-e0m: Fixed threshold logic by adding null check in src/selection.py:42`
 
+##### 5.5 IMPROVE Action List (MANDATORY)
+
+**At the end of Section 5, produce a concrete action list for IMPROVE phase:**
+
+```
+BEADS ACTIONS:
+- CLOSE: <id> — <reason>
+- COMMENT: <id> — <what to write>
+- CREATE: "<title>" — <description summary>
+```
+
+**Why:** Without an explicit action list, IMPROVE must re-derive actions from prose. The action list is the handoff contract between RECAP and IMPROVE — unambiguous, executable, no interpretation needed.
+
 ##### 5.4 Continuation Check (MANDATORY)
 
 After listing all beads to close in 5.3, check: **Would closing them leave ZERO open beads?**
