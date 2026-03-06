@@ -716,10 +716,10 @@ Only enter when user confirms (e.g., "proceed", "close", "done").
 
 1. `bd export` (JSONL export — replaces old `bd sync`)
 2. Plugin-Sync (if applicable — see check above)
-3. **Commit ALL repos with changes** — not just the project repo:
-   - Project repo: `git add . && git commit && git push`
-   - Plugin source repos (e.g., `~/Documents/ai/Meta/blank`): `git add . && git commit && git push`
-   - Any other repo touched this session
+3. **Commit ALL repos with changes** via git-committer agent:
+   - For each repo with changes: `Task(subagent_type="git-committer", prompt="Repo: <path>")`
+   - Multiple independent repos = parallel agent calls
+   - Verify agent output: check that all repos were committed and pushed
    - **A repo with uncommitted changes = lost work in the next session**
 4. Ask: "New cycle or done for now?"
 
