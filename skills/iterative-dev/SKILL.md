@@ -52,6 +52,8 @@ Beads provide cross-session context. Agent exploration without bead context = wa
 
 **Note:** Always use `-s open` by default. Show closed beads only when user explicitly asks.
 
+**After reading bead comments, VERIFY:** Does the bead already answer the scope question you're about to ask? If the bead comments contain explicit next steps, decisions, or approaches — state them as fact ("Laut Bead: FFS mit Korrelations-Ranking"), don't re-ask as an open question. Re-asking what's already documented = not reading carefully enough.
+
 ### Scoping (BEFORE Exploration)
 
 BEFORE you explore, clarify with the user:
