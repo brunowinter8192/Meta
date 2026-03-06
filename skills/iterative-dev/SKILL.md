@@ -382,13 +382,9 @@ Evaluate subagent usage during the cycle (if agents were used).
 
 ##### Eval Reports (Orchestrator)
 
-**BEFORE manual evaluation:** Check `Evaluation_Proposals/` for automated eval reports.
+**Do NOT search Evaluation_Proposals/ autonomously.** The user provides relevant report paths explicitly when they exist. Only read reports the user points you to.
 
-```bash
-ls Evaluation_Proposals/*.md 2>/dev/null
-```
-
-If reports exist:
+If user provides report paths:
 1. Read each report
 2. Integrate findings into the sections below (Output Quality, What Helped, What Could Be Better)
 3. Add eval-report proposals to Section 6.2 Process Improvements if actionable
@@ -563,6 +559,36 @@ If an "improvement" targets a DOCS.md or README → it belongs in 6.1, not here.
 - Every new script, changed behavior, or new parameter MUST be reflected **IMMEDIATELY**
 - Skipping DOCS updates = **BROKEN WORKFLOW** for future sessions
 - If Open Items include DOCS update → **DO IT IN IMPROVE, NOT LATER**
+
+**Active Verification (MANDATORY — not a passive question):**
+
+"Does DOCS.md need updating?" is NOT answered from memory. You MUST actively verify:
+
+1. **Read ALL DOCS.md/README.md** in directories touched this cycle
+2. **Compare directory trees** in docs vs actual files on disk (`ls` the directory)
+3. **Check for drift** — concrete checklist per doc file:
+
+| Check | How | Drift = |
+|-------|-----|---------|
+| Files listed in tree | `ls` actual dir, compare to tree in doc | File added/deleted/renamed but doc shows old tree |
+| Function tables | Read source, compare to doc tables | Function added/removed/signature changed |
+| Variables/constants | Read source, compare to doc tables | Value changed, new constant added |
+| Architecture decisions | Compare doc claims to actual code | e.g. "Manual numpy/pandas" but code uses ta-lib |
+| Entry points / CLI args | Read argparse in scripts, compare | New arg added, default changed |
+| Import paths / dependencies | Read imports in source | New dependency, removed module |
+
+4. **Report per file** in the RECAP plan file:
+
+```
+DOCS DRIFT CHECK:
+- src/features/DOCS.md: OK / DRIFT (details)
+- DOCS.md (root): OK / DRIFT (details)
+- README.md: OK / DRIFT (details)
+```
+
+5. **Every DRIFT item → Content Improvement (6.1)** with priority Important or Critical
+
+**Why this is non-negotiable:** Docs are the primary navigation tool for future sessions (AI reads DOCS.md before exploring code). Stale docs = wrong assumptions = wasted effort. A doc that lists a deleted file is WORSE than no doc at all — it actively misleads.
 
 #### 7. Open Items
 
