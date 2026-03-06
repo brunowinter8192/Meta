@@ -704,8 +704,8 @@ Only enter when user confirms (e.g., "proceed", "close", "done").
 **PLUGIN-SYNC CHECK (MANDATORY):**
 - Were ANY plugin-distributed files edited this session? (Skills, Agents, Commands, server.py, src/ modules)
 - Check: Does the current project have a `plugin-sync.sh` entry? (see `~/.claude/CLAUDE.md` Plugin Cache Management)
-- If YES → run `plugin-sync.sh <plugin-name> <repo-path>` BEFORE commit
-- If NO → skip
+- If YES → include sync command in git-committer prompt (agent runs sync before commits)
+- If NO → omit Plugin-Sync section from prompt
 - **Without sync: edited Skills/Agents/Tools stay in source repo but never reach the plugin cache. The MCP server runs from cache — unsyncronized changes are invisible to Claude Code.**
 
 **EVAL CLEANUP (MANDATORY):**
@@ -715,13 +715,24 @@ Only enter when user confirms (e.g., "proceed", "close", "done").
 - NEVER `rm -f Evaluation_Proposals/*.md` — other sessions may have unprocessed reports
 
 1. `bd export` (JSONL export — replaces old `bd sync`)
-2. Plugin-Sync (if applicable — see check above)
-3. **Commit ALL repos with changes** via git-committer agent:
-   - For each repo with changes: `Task(subagent_type="git-committer", prompt="Repo: <path>")`
-   - Multiple independent repos = parallel agent calls
+2. **Commit ALL repos with changes** via git-committer agent:
+   - Collect ALL repo paths with changes during this session
+   - Collect plugin-sync commands if applicable (see check above)
+   - Single agent call with full context:
+   ```
+   Task(subagent_type="git-committer", prompt="""
+   Repos:
+   - /path/to/project
+   - /path/to/plugin-source
+
+   Plugin-Sync (run BEFORE commits):
+   - plugin-sync.sh <name> <repo-path>
+   """)
+   ```
+   - Omit Plugin-Sync section if no sync needed
    - Verify agent output: check that all repos were committed and pushed
    - **A repo with uncommitted changes = lost work in the next session**
-4. Ask: "New cycle or done for now?"
+3. Ask: "New cycle or done for now?"
 
 ---
 
