@@ -56,6 +56,8 @@ Beads provide cross-session context. Agent exploration without bead context = wa
 
 ### Scoping (BEFORE Exploration)
 
+**Code-First Rule:** When user provides a codebase task (modify, convert, create based on existing code): READ the relevant source code BEFORE asking scope questions. Most questions answer themselves from code. Only ask what the code cannot tell you (intent, preferences, target audience).
+
 BEFORE you explore, clarify with the user:
 
 **1. SCOPE - What is the end goal?**
@@ -375,6 +377,18 @@ Evaluate current hooks for improvements:
 - Commands that failed due to missing hook rules
 - Verbose output that polluted context
 - Security patterns that should be blocked
+
+**Token Efficiency Analysis:**
+
+Review Bash tool calls from this session and identify where hooks could have saved tokens:
+- Commands with large outputs that could be piped through `head -N` or `tail -N`
+- Repeated commands whose output could be cached or silenced after first run
+- Commands where only a subset of output was needed (e.g., `ls` when only checking existence)
+- Tools that returned full file contents when a targeted grep would suffice
+
+For each finding: estimate token waste (small/medium/large) and propose a hook rule or pattern.
+
+**Goal:** Keep context window clean so more work fits in a single session.
 
 **Reference:** `~/.claude/scripts/README.md`
 
