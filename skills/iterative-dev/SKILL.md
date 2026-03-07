@@ -731,6 +731,7 @@ Only enter when user confirms (e.g., "proceed", "close", "done").
 1. `bd export` (JSONL export — replaces old `bd sync`)
 2. **Commit ALL repos with changes** via git-committer agent:
    - **PRE-DISPATCH CHECK:** Verify ALL file edits are complete BEFORE dispatching. The git-committer CANNOT edit files — it can only stage and commit what's already changed on disk. If `git diff` for a repo shows no changes but you expected changes: the edit was missed. Fix it yourself, THEN dispatch.
+   - **FILE LIST = TOOL CALLS (MANDATORY):** The file list in the git-committer prompt MUST only contain files you actually modified via Edit/Write tool calls this session. Do NOT list files from memory, intent, or plan — only files where you can point to the specific Edit/Write call that changed them. Phantom entries (files you planned to change but didn't) cause incomplete commits and post-dispatch confusion.
    - Collect ALL repo paths with changes during this session
    - Collect plugin-sync commands if applicable (see check above)
    - Single agent call with full context:
