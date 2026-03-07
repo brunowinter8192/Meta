@@ -4,3 +4,7 @@
 .claude/
 Hooks_Reference/
 __pycache__/
+
+# Dolt database files (added by bd init)
+.dolt/
+*.db

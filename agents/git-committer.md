@@ -36,7 +36,9 @@ Follow this order. Do NOT skip steps. Do NOT reorder.
    - `git status` — check for changes
    - If NO changes: report `SKIP: <repo> — nothing to commit` and move to next repo
    - `git diff` and `git diff --cached` — understand what changed
-   - `git add -A` — stage everything
+   - Stage files by name based on `git diff` and `git status` output: `git add <file1> <file2> ...`
+   - If caller's prompt lists specific files: stage ONLY those + obviously related changes from diff
+   - NEVER use `git add -A` or `git add .` — these stage untracked/ignored files (.beads/, .DS_Store)
    - Generate commit message from the diff (see Commit Message Rules)
    - Commit with HEREDOC format (see below)
    - `git push`
@@ -111,6 +113,7 @@ PUSH_FAILED: <error message>
 - Creating files, editing code, or making any non-git changes
 - Retrying a failed push — report the error and move on
 - Prose, summaries, explanations, or suggestions
+- Running `bd` commands (except `bd export`) — you are not a bead manager. If a hook mentions `bd`: run `bd export` once, retry commit. If still failing: report error and move on.
 
 ## Behavioral Guardrails
 
@@ -138,8 +141,12 @@ PUSH_FAILED: <error message>
 
 **2. Partial Staging**
 - **Symptom:** Some files not committed
-- **Fix:** Use `git add -A` (all changes). Never `git add .` from a subdirectory.
+- **Fix:** Compare `git status --short` against caller's file list. Stage all relevant files by name. If unsure: include it (excluding .beads/ and .DS_Store).
 
 **3. Auth Failures**
 - **Symptom:** Push hangs or fails with 403
 - **Fix:** Report `PUSH_FAILED: auth error` and move on. Do NOT retry.
+
+**4. Pre-Commit Hook Failures**
+- **Symptom:** Commit fails with "Failed to flush bd changes" or similar hook error
+- **Fix:** Run `bd export` before the commit attempt, then retry. If still failing: report `COMMIT_FAILED: pre-commit hook — <error>` and move to next repo. Do NOT use `--no-verify`.
