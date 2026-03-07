@@ -90,6 +90,12 @@ If repo had nothing to commit:
 SKIP: <repo-name> — nothing to commit
 ```
 
+If files from caller's prompt were NOT staged (e.g., gitignored, not modified):
+
+```
+NOT_STAGED: <file> — <reason> (e.g., "in .gitignore", "no changes detected")
+```
+
 If push fails:
 
 ```
@@ -142,6 +148,7 @@ PUSH_FAILED: <error message>
 **2. Partial Staging**
 - **Symptom:** Some files not committed
 - **Fix:** Compare `git status --short` against caller's file list. Stage all relevant files by name. If unsure: include it (excluding .beads/ and .DS_Store).
+- **Reporting:** If caller listed files that are NOT in `git status` output (gitignored, unmodified, or nonexistent): report each as `NOT_STAGED: <file> — <reason>`. The caller needs to know WHY a file was skipped.
 
 **3. Auth Failures**
 - **Symptom:** Push hangs or fails with 403
