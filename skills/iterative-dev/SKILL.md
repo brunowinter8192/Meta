@@ -732,6 +732,8 @@ Only enter when user confirms (e.g., "proceed", "close", "done").
 2. **Commit ALL repos with changes** via git-committer agent:
    - **PRE-DISPATCH CHECK:** Verify ALL file edits are complete BEFORE dispatching. The git-committer CANNOT edit files — it can only stage and commit what's already changed on disk. If `git diff` for a repo shows no changes but you expected changes: the edit was missed. Fix it yourself, THEN dispatch.
    - **FILE LIST = TOOL CALLS (MANDATORY):** The file list in the git-committer prompt MUST only contain files you actually modified via Edit/Write tool calls this session. Do NOT list files from memory, intent, or plan — only files where you can point to the specific Edit/Write call that changed them. Phantom entries (files you planned to change but didn't) cause incomplete commits and post-dispatch confusion.
+   - **GITIGNORE CHECK:** Before listing files in the dispatch prompt, verify each path is NOT in `.gitignore`. Run `git check-ignore <path>` or check `.gitignore` manually. Gitignored files in the prompt cause staging failures.
+   - **DELETIONS:** For deleted files, write `<path> (DELETED)` — not just the filename. If unsure whether deletions are tracked: `git ls-files <path>` to confirm. Untracked deletions cannot be staged.
    - Collect ALL repo paths with changes during this session
    - Collect plugin-sync commands if applicable (see check above)
    - Single agent call with full context:
@@ -746,7 +748,7 @@ Only enter when user confirms (e.g., "proceed", "close", "done").
    """)
    ```
    - Omit Plugin-Sync section if no sync needed
-   - Verify agent output: check that all repos were committed and pushed
+   - **POST-DISPATCH VERIFY:** For EACH repo, run `git -C <repo> log -1 --oneline`. If the latest commit matches the session's work → done. If NOT → re-dispatch ONCE for that repo only. Never re-dispatch twice — if the second attempt also appears to fail, report to user.
    - **A repo with uncommitted changes = lost work in the next session**
 3. Ask: "New cycle or done for now?"
 

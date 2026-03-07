@@ -157,3 +157,7 @@ PUSH_FAILED: <error message>
 **4. Pre-Commit Hook Failures**
 - **Symptom:** Commit fails with "Failed to flush bd changes" or similar hook error
 - **Fix:** Run `bd export` before the commit attempt, then retry. If still failing: report `COMMIT_FAILED: pre-commit hook — <error>` and move to next repo. Do NOT use `--no-verify`.
+
+**5. Lost Repo After Staging Errors**
+- **Symptom:** Repo successfully committed but missing from final response after earlier staging failures
+- **Fix:** After ALL repos are processed, review your git commands. For each repo in the original prompt, output a REPO/SKIP/ERROR block. Missing blocks = broken output.
