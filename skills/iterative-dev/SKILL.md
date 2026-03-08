@@ -281,9 +281,13 @@ After completing plan edits, BEFORE transition to RECAP:
 
 ### Phase Entry
 
-1. Ask user: "Activate Plan Mode for RECAP (`/plan`)"
-2. Wait for Plan Mode system message
-3. Proceed with evaluation report (read-only enforced by Plan Mode)
+1. If subagents were used this cycle: User may run `/eval-spawn <project>` to spawn async Sonnet eval
+   - Works in Plan Mode (read-only + tmux spawn, no project changes)
+   - Sonnet evaluates all agents async, writes reports to `<project>/Evaluation_Proposals/`
+   - Session stays open for review after CLOSING
+2. Ask user: "Activate Plan Mode for RECAP (`/plan`)"
+3. Wait for Plan Mode system message
+4. Proceed with evaluation report (read-only enforced by Plan Mode)
 
 ### Plan File Handling
 
@@ -396,32 +400,23 @@ For each finding: estimate token waste (small/medium/large) and propose a hook r
 
 Evaluate subagent usage during the cycle (if agents were used).
 
-##### Eval Reports (Orchestrator)
+##### 4.1 Eval Reports
 
-**Do NOT search Evaluation_Proposals/ autonomously.** The user provides relevant report paths explicitly when they exist. Only read reports the user points you to.
+If `Evaluation_Proposals/*.md` reports exist (from `/eval-spawn` or a previous session):
 
-If user provides report paths:
-1. Read each report
-2. Integrate findings into the sections below (Output Quality, What Helped, What Could Be Better)
-3. Add eval-report proposals to Section 6.2 Process Improvements if actionable
-4. Track which report files were read (needed for CLOSING cleanup)
+1. `ls Evaluation_Proposals/*.md` — check for reports
+2. Read each report
+3. Present key findings + proposals to user
+4. Integrate actionable proposals into Section 6.2 Process Improvements
+5. Track which report files were read (needed for CLOSING cleanup)
 
-##### Output Quality
+**Do NOT search Evaluation_Proposals/ autonomously if no eval-spawn was used.** Only check when eval-spawn was triggered or user explicitly points to reports.
 
-| Aspect | Rating | Criteria |
-|--------|--------|----------|
-| Format | ✅/⚠️/❌ | Did agent follow requested output format? |
-| Relevance | ✅/⚠️/❌ | Were findings relevant to the task? |
-| Completeness | ✅/⚠️/❌ | Did agent find all critical files/info? |
-| Actionability | ✅/⚠️/❌ | Could I act on the output without additional research? |
+##### 4.2 Self-Assessment (Opus only)
 
-##### What Helped
-- List concrete benefits from agent usage
+These require full session context that Sonnet does not have — Opus evaluates them directly.
 
-##### What Could Be Better
-- Specific improvements for agent prompts or output
-
-##### Missed Agent Usage
+**Missed Agent Usage:**
 
 Identify situations where agent should have been used but wasn't:
 
@@ -729,11 +724,19 @@ Only enter when user confirms (e.g., "proceed", "close", "done").
 - NEVER `rm -f Evaluation_Proposals/*.md` — other sessions may have unprocessed reports
 
 1. `bd export` (JSONL export — replaces old `bd sync`)
-2. **Commit ALL repos with changes** via git-committer agent:
-   - **PRE-DISPATCH CHECK:** Verify ALL file edits are complete BEFORE dispatching. The git-committer CANNOT edit files — it can only stage and commit what's already changed on disk. If `git diff` for a repo shows no changes but you expected changes: the edit was missed. Fix it yourself, THEN dispatch.
+2. **Commit ALL repos with changes via git-committer agent — NO EXCEPTIONS:**
+
+   **MANDATORY AGENT USAGE (NON-NEGOTIABLE):**
+   - ALWAYS use the git-committer agent for ALL commits. No manual `git add`, `git commit`, `git push`.
+   - NEVER run `git diff`, `git status`, or any git inspection commands yourself before dispatching — the git-committer does this internally.
+   - Your ONLY job: collect repo paths + file lists + context, then dispatch. Nothing else.
+   - The git-committer handles: status, diff, staging, commit message, commit, push. You handle: NOTHING git-related.
+
+   **PRE-DISPATCH CHECK:** Verify ALL file edits are complete BEFORE dispatching. The git-committer CANNOT edit files — it can only stage and commit what's already changed on disk. If you expected to edit a file but can't find the Edit/Write call: the edit was missed. Fix it yourself, THEN dispatch.
    - **FILE LIST = TOOL CALLS (MANDATORY):** The file list in the git-committer prompt MUST only contain files you actually modified via Edit/Write tool calls this session. Do NOT list files from memory, intent, or plan — only files where you can point to the specific Edit/Write call that changed them. Phantom entries (files you planned to change but didn't) cause incomplete commits and post-dispatch confusion.
    - **GITIGNORE CHECK:** Before listing files in the dispatch prompt, verify each path is NOT in `.gitignore`. Run `git check-ignore <path>` or check `.gitignore` manually. Gitignored files in the prompt cause staging failures.
    - **DELETIONS:** For deleted files, write `<path> (DELETED)` — not just the filename. If unsure whether deletions are tracked: `git ls-files <path>` to confirm. Untracked deletions cannot be staged.
+   - **NON-GIT REPOS:** If a changed file lives outside a git repo (e.g., `~/.claude/CLAUDE.md`), note it in the dispatch prompt so the agent can skip it gracefully. Don't silently omit it.
    - Collect ALL repo paths with changes during this session
    - Collect plugin-sync commands if applicable (see check above)
    - Single agent call with full context:
@@ -751,6 +754,14 @@ Only enter when user confirms (e.g., "proceed", "close", "done").
    - **POST-DISPATCH VERIFY:** For EACH repo, run `git -C <repo> log -1 --oneline`. If the latest commit matches the session's work → done. If NOT → re-dispatch ONCE for that repo only. Never re-dispatch twice — if the second attempt also appears to fail, report to user.
    - **A repo with uncommitted changes = lost work in the next session**
 3. Ask: "New cycle or done for now?"
+
+**If eval-spawn was used:** Session stays open. When Sonnet finishes and user returns:
+1. `ls Evaluation_Proposals/*.md` — read new reports
+2. Present key findings + proposals to user
+3. User approves/rejects each proposal
+4. Apply approved proposals to automation files
+5. Cleanup: `rm -f` processed report files
+6. Final commit (automation file changes only) via git-committer
 
 ---
 

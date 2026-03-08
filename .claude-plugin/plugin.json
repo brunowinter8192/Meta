@@ -8,5 +8,5 @@
   "keywords": ["iterative-dev", "development-cycle", "code-investigate", "agent"],
   "skills": ["./skills/iterative-dev/", "./skills/agent-code-investigate/", "./skills/plugin-dev/"],
   "agents": ["./agents/code-investigate-specialist.md", "./agents/git-committer.md"],
-  "commands": ["./commands/spawn-worker.md"]
+  "commands": ["./commands/spawn-worker.md", "./commands/eval.md", "./commands/eval-spawn.md"]
 }
