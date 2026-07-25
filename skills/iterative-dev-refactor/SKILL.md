@@ -41,7 +41,7 @@ Does one place carry too much and want to split?
   Per module, group top-level UPPER_CASE constants by leading `PREFIX_` token; a prefix with ≥3 constants is a cluster; ≥2 clusters in one file → split, each cluster its own module.
 
 **Consequence — any split relocates symbols, so the worker re-points every reference before recap.**
-A split moves functions / constants / attributes to new modules. Post-implementation, before recap, the worker greps EVERY reference to each moved symbol and confirms it resolves to the new access path. Import + entry-point smoke tests validate only the load path; references in conditionally-executed code (event handlers, error branches, rare CLI flags, lazy imports) stay stale and fail only at runtime, and `docs-drift-check` does not catch a syntactically-valid stale access. Whitelist names deliberately left in place so they are not false-flagged.
+A split moves functions / constants / attributes to new modules. Post-implementation, before recap, the worker greps EVERY reference to each moved symbol and confirms it resolves to the new access path. Whitelist names deliberately left in place.
 
 ### Step 3 — Control-Flow Integrity
 
@@ -75,7 +75,7 @@ Validate the redesign in `dev/` before touching `src/`: build it as a `dev/` pro
 
 ## Phase 2 — Module Standards Conformance
 
-The worker coding standard (`shared-rules/worker/code-standards`) defines how a single module is written. Opus does NOT get it in context — READ it each run (it changes), extract the concrete standards, and check every module against them. This catches what the worker was supposed to do but did not. A module that deviates from a standard → dispatch a worker to bring it into conformance.
+The worker coding standard (`shared-rules/worker/code-standards`) defines how a single module is written. Opus does NOT get it in context — READ it each run (it changes), extract the concrete standards, and check every module against them. A module that deviates from a standard → dispatch a worker to bring it into conformance.
 
 ## Phase 3 — Doc-Drift Check
 

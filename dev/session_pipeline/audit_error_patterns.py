@@ -6,11 +6,11 @@ Separates hard errors (is_error=True) from soft errors (no flag but error conten
 Produces MD report with pattern counts and examples.
 
 Usage:
-    python3 dev/pipeline/audit_error_patterns.py
-    python3 dev/pipeline/audit_error_patterns.py path/to/specific.jsonl
+    python3 dev/session_pipeline/audit_error_patterns.py
+    python3 dev/session_pipeline/audit_error_patterns.py path/to/specific.jsonl
 
 Default: all JSONLs under ~/.claude/projects/
-Output: dev/pipeline/reports/error_patterns_<timestamp>.md
+Output: dev/session_pipeline/md/error_patterns_<timestamp>.md
 """
 
 # INFRASTRUCTURE
@@ -22,7 +22,7 @@ from datetime import datetime
 from pathlib import Path
 
 PROJECTS_DIR = Path.home() / '.claude' / 'projects'
-REPORTS_DIR = Path(__file__).parent / 'reports'
+REPORTS_DIR = Path(__file__).parent / 'md'
 
 SOFT_ERROR_INDICATORS = [
     'Traceback (most recent call last)',

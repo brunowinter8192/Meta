@@ -324,7 +324,7 @@ worker_send() {
     # Signal the orchestrator-send event BEFORE delivering the keys. The Monitor_CC menubar
     # treats workers with a recent signal as 'working' for auto-abort, bridging the latency
     # window between this tmux send-keys and CC's UserPromptSubmit hook firing — see
-    # Monitor_CC/decisions/OldThemes/menubar_signal_grace/initial_design.md.
+    # Monitor_CC process-docs (menubar signal grace).
     _orchestrator_signal_update "$session"
 
     # Paste message, then send Enter as key event.
@@ -568,7 +568,7 @@ RUNSCRIPT
     # Write orchestrator signal for menubar grace (Fix A: spawn-case protection).
     # Same mechanism as worker_send — covers initial thinking phase before first JSONL
     # write. Without this, menubar's stale-JSONL demote kills Opus bg timers during
-    # the fresh-worker thinking window. See Monitor_CC decisions/OldThemes/menubar_signal_grace/.
+    # the fresh-worker thinking window. See Monitor_CC process-docs (menubar signal grace).
     _orchestrator_signal_update "$session"
 
     # Store spawn metadata for worker_list display

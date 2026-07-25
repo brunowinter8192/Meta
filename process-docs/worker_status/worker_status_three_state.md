@@ -44,5 +44,4 @@ The whole function + its 4 call sites + the `usage()` help text ("context remain
 
 ## Doc surfaces updated at the time
 
-- the spawn-architecture snapshot in this area (status states; context_pct paragraph removed)
 - `src/spawn/DOCS.md` — status-detection description.
