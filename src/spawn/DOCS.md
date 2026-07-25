@@ -24,7 +24,7 @@ Invoked via `python3 -m src.spawn.spawn` by `worker-cli spawn`:
 
 `worker_capture_clean NAME [PROJECT_PATH]` — captures pane, scopes to output since last real orchestrator `❯` prompt, applies clean filter (see `_capture_clean.py`), prints to stdout. Called by `worker-cli capture` (default). `worker_capture` (raw pane to file) called via `worker-cli capture --raw`.
 
-**Status detection (`_worker_detect_status`):** `limit reached` from local pane/process checks (`pane_dead=1`, no child PIDs, no `claude` descendant) OR hook_status=`working` with `#{window_activity}` stale > 10s (forcefully-stopped: ESC/crash/ctx-limit) — mirrors menubar `discover.py:178-181`; `idle` from `hooks.json[session_id].status` (Stop hook fired); `working` from hooks (activity fresh ≤ 10s); `unknown` if no authoritative data. Fail-open: window_activity unreadable → no demote. All paths return exit 0. See `decisions/OldThemes/worker_force_stop_detection.md`.
+**Status detection (`_worker_detect_status`):** `limit reached` from local pane/process checks (`pane_dead=1`, no child PIDs, no `claude` descendant) OR hook_status=`working` with `#{window_activity}` stale > 10s (forcefully-stopped: ESC/crash/ctx-limit) — mirrors menubar `discover.py:178-181`; `idle` from `hooks.json[session_id].status` (Stop hook fired); `working` from hooks (activity fresh ≤ 10s); `unknown` if no authoritative data. Fail-open: window_activity unreadable → no demote. All paths return exit 0. See `process-docs/worker_status/worker_force_stop_detection.md`.
 
 **spawn_claude_worker — Prompt-Inject Flow:**
 claude starts bare (no positional prompt arg — prompt never touches the cmdline).
@@ -33,7 +33,7 @@ After session creation, a readiness gate polls `tmux capture-pane` for `^❯`
 Prompt is injected via `load-buffer / paste-buffer / send-keys Enter` (same
 as `worker_send`). Fragility: `^❯` marker is CC-version-dependent — if the
 glyph changes, gate times out and spawn fails explicitly; update the grep
-pattern. See `decisions/OldThemes/worker_spawn_prompt_injection.md`.
+pattern. See `process-docs/worker_spawn/worker_spawn_prompt_injection.md`.
 
 ### _capture_clean.py (153 LOC)
 

@@ -1,13 +1,8 @@
-# rules_staging — Staged Rule Observations (not yet hardened)
+# Rule Observation 2026-06-04 — Check Context BEFORE the Reuse-vs-Fresh Decision
 
-A running log of orchestration-behaviour observations noticed in real sessions. Each entry is a
-CANDIDATE refinement to the worker rules (`~/.claude/shared-rules/opus/workers-*.md`), recorded
-when first noticed and watched for recurrence before being promoted into an actual rule. Presence
-here = "seen once, observing", NOT "this is a rule".
-
----
-
-## 2026-06-04 — Check context BEFORE the reuse-vs-fresh decision
+Orchestration-behaviour observation from a real session, recorded 2026-06-04 as a CANDIDATE
+refinement to the worker rules (`~/.claude/shared-rules/opus/workers-*.md`) — status at recording
+time: "seen once, observing", not a hardened rule.
 
 **Waste definition (user):** waste = a worker already holds full usable context for a topic and a
 BUILDING-ON task is delegated to a NEWLY spawned worker. NOT waste = fresh spawn for a completely

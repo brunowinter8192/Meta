@@ -65,8 +65,4 @@ Display sites use `${PCT:+ $PCT}` so an empty % adds no trailing space.
 - genuinely-working-first-turn % (working path) → code/formula-verified only (same `context_pct` path; sum math checked against status-demo data 19455→88%), not live-tested.
 
 ## Consequence
-The kill-while-working guard is unblocked: it parses public `worker-cli status` → sees `idle` for a stopped zombie → can kill it.
-
-## Cross-reference
-- `worker_status_hooks_source.md` — the superseded thin-client / no-demote decision + its accepted trade-off.
-- `worker_dead_ctx_detection.md` — earlier `context_pct` fix (dead worker showed 100%); same function, the `—%` guards there remain intact.
+The kill-while-working guard is unblocked: it parses public `worker-cli status` → sees `idle` for a stopped zombie → can kill it. This reverses the earlier thin-client/no-demote decision (its accepted trade-off documented in this area); the earlier `context_pct` dead-worker fix (100% on dead workers) is untouched — its `—%` guards remain intact.

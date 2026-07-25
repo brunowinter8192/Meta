@@ -1,8 +1,10 @@
-# Worker Spawning
+# Worker Spawning — Architecture Snapshot
 
-## Status Quo (IST)
+*Snapshot as of 2026-07 — historical process record; the live current state is the source code (`src/spawn/`, `bin/worker-cli`), not this file.*
 
-Architecture: one tmux session per worker, named `worker-<project>-<name>`. Project-scoped — workers from different projects never collide.
+## Architecture as of 2026-07
+
+One tmux session per worker, named `worker-<project>-<name>`. Project-scoped — workers from different projects never collide.
 
 **Spawning:**
 - `spawn_claude_worker()` — creates tmux session with direct command arg (no shell-ready polling), writes prompt to temp file, launches `claude-patched --model <model>` with prompt from file
@@ -25,7 +27,7 @@ Architecture: one tmux session per worker, named `worker-<project>-<name>`. Proj
 - `worker_capture_clean()` — scoped+cleaned capture: slices to output since last real `❯` prompt, applies clean filter (strip: boot box, spinners, diff body, widget chrome; keep: tool headers, counters, prose, Bash output); prints to stdout. Default for `worker-cli capture`.
 - `worker_send()` — sends text input to worker's Claude session (tmux send-keys + Enter)
 
-**Cross-project Worktree Tracking (`bin/worker-cli`):**
+**Cross-project worktree tracking (`bin/worker-cli`):**
 Registry dir: `${WORKER_REGISTRY_DIR:-$HOME/.claude/.worker-registry}` — env-overridable (test isolation).
 - `worker-cli worktree <name> <target-repo> [branch]` — creates `.claude/worktrees/<name>` in target repo on `<branch>` (default `<name>`); validates target is a git repo and worktree doesn't already exist (fails non-zero); appends `<target-repo>\t<branch>` to `$REGISTRY_DIR/<name>.worktrees` (sidecar); echoes the absolute worktree path.
 - `worker-cli kill <name>` (extended) — after spawn-side cleanup, reads `$REGISTRY_DIR/<name>.worktrees` line-by-line; for each entry: `git worktree remove --force` + `git branch -D` in the target repo (both best-effort: `2>/dev/null || echo not-found`); deletes the sidecar file. `registry_delete` always executes regardless of sidecar results.
@@ -34,9 +36,9 @@ Registry dir: `${WORKER_REGISTRY_DIR:-$HOME/.claude/.worker-registry}` — env-o
 
 Sidecar format: `$REGISTRY_DIR/<name>.worktrees`, one `<abs-target-path>\t<branch>` per line (tab-separated). Multiple cross-project worktrees for one worker = multiple lines.
 
-**`worker-cli capture` (IST):** defaults to `worker_capture_clean` (clean+scoped output to stdout). `--raw` falls back to `worker_capture` (raw pane to file, prints path). Implemented in `_capture_clean.py` (`src/spawn/`), called from `worker_capture_clean()` in `tmux_spawn.sh`.
+**`worker-cli capture`:** defaults to `worker_capture_clean` (clean+scoped output to stdout). `--raw` falls back to `worker_capture` (raw pane to file, prints path). Implemented in `_capture_clean.py` (`src/spawn/`), called from `worker_capture_clean()` in `tmux_spawn.sh`.
 
-**Status Detection (IST):**
+**Status detection:**
 Single authoritative source: `~/Library/Application Support/com.brunowinter.monitor-cc-menubar/hooks.json`.
 Schema: `{ "<session_id>": { "status": "working"|"idle", ... } }` — written by Monitor_CC lifecycle hooks.
 `_worker_detect_status` logic:
@@ -51,47 +53,39 @@ Fail-open: `#{window_activity}` unreadable → no demote (status stays `working`
 - No automatic notification to parent session (PostToolUse hook removed — overhead without value)
 
 **Communication — Main → Worker:**
-- Main spawnt Worker mit Task-Prompt (CLI argument oder Prompt-File)
-- `worker_send()` kann Text an laufenden Worker schicken (tmux send-keys)
-- Funktioniert NUR wenn Worker auf User-Input wartet (Claude Code idle)
-- Einschränkung: tmux send-keys schickt Keystrokes, Claude Code erkennt es als User-Input — funktioniert in der Praxis
+- Main spawns the worker with a task prompt (CLI argument or prompt file)
+- `worker_send()` can send text to a running worker (tmux send-keys)
+- Works ONLY when the worker is waiting for user input (Claude Code idle)
+- Constraint: tmux send-keys sends keystrokes; Claude Code recognizes them as user input — works in practice
 
-**Communication — Worker → Main: NICHT MÖGLICH**
-- Kein Mechanismus um dem Parent-Agent programmatisch mitzuteilen dass der Worker fertig ist
-- `.done` File existiert, aber kein automatischer Consumer im Parent
-- PostToolUse Hook (worker-done-check.sh) wurde entfernt — Overhead bei jedem Tool-Call ohne Nutzen
-- `claude inject` (anthropics/claude-code#24947) würde das lösen: programmatischer Input an laufende Session. OPEN, high-priority, kein Implementierungszeitplan.
-- Programmatic Input Submission (#15553) bestätigt: Claude Code ignoriert programmatischen stdin als Submit
-- Community-Konsens (Reddit, GitHub): Niemand hat einen funktionierenden Workaround. Alle warten auf `claude inject`.
+**Communication — Worker → Main: NOT POSSIBLE (as of 2026-07):**
+- No mechanism to programmatically tell the parent agent that the worker is done
+- The `.done` file exists, but there is no automatic consumer in the parent
+- The PostToolUse hook (worker-done-check.sh) was removed — overhead on every tool call without benefit
+- `claude inject` (anthropics/claude-code#24947) would solve this: programmatic input to a running session. OPEN at the time, high-priority, no implementation timeline.
+- Programmatic Input Submission (#15553) confirmed: Claude Code ignores programmatic stdin as submit
+- Community consensus (Reddit, GitHub) at the time: nobody had a working workaround; everyone was waiting for `claude inject`.
 
-**Dev-Branch Workflow:**
+**Dev-branch workflow:**
 - Opus works on `dev` branch during IMPLEMENT. Workers branch from `dev` (worktrees at `.claude/worktrees/<name>/`).
 - `worker_merge` merges worker branch into whatever branch is currently checked out (dynamic via `git rev-parse --abbrev-ref HEAD`). No hardcoded `main`.
 - Opus reviews on `dev` — shared-rules use `.claude/worktrees/**` paths, so reading files on `dev` (normal project path) does NOT trigger execution rules.
-- Session end: `dev_sync` MCP tool updates main/master ref to dev HEAD via `git update-ref` (no checkout needed — avoids beads-worktree conflict).
+- Session end: `dev_sync` MCP tool updates main/master ref to dev HEAD via `git update-ref` (no checkout needed).
 
 **`claude-patched` (MANDATORY):**
 - Workers ALWAYS use `claude-patched` instead of `claude`. The patch fixes cache behavior (Cache Read instead of Cache Create per turn), preventing massive usage spikes.
 
-**Files:** `src/spawn/tmux_spawn.sh` (785 LOC), `src/spawn/_capture_clean.py` (153 LOC)
+**Files:** `src/spawn/tmux_spawn.sh` (785 LOC at snapshot time), `src/spawn/_capture_clean.py` (153 LOC)
 
-## Recommendation (SOLL)
+## Open questions at snapshot time
 
-**Shell-Ready Detection:** Keep (implemented) — Direct command arg to `tmux new-session`. Env vars inherited automatically (verified in dev/spawn/test_direct_command.sh). Polling loop eliminated.
+- `claude inject` timeline: the issue was high-priority but without ETA.
 
-**Worker Status Detection:** Keep (implemented) — reads Monitor_CC's `hooks.json` + detects force-stops via `#{window_activity}` stale > 10s. Three states + unknown: `limit reached` for all abnormally/forcefully stopped workers (pane_dead, no claude child, stale window_activity); `idle` for normal Stop-hook finish; `working` for active CC. `unknown` when no authoritative data. `remain-on-exit on` keeps pane open for detection. See `OldThemes/worker_force_stop_detection.md`.
+## Evidence
 
-**Worker → Main Notification:** Pending — blockiert durch fehlendes `claude inject`. Kein Workaround möglich. `.done` File bleibt als manuelles Signal. Automatische Notification erst wenn #24947 implementiert ist.
-
-## Offene Fragen
-
-- `claude inject` Timeline: Issue ist high-priority aber ohne ETA. Regelmäßig prüfen.
-
-## Evidenz
-
-- Live repro 2026-06-19 (`status-demo`, ESC-interrupted, full context, claude alive): hooks.json=`working`, `#{window_activity}` age 384s→975s (≫10s) → pre-fix `worker-cli status` = `working`, menubar = `idle` (diverged); post-fix = `limit reached`. Detail: `OldThemes/worker_force_stop_detection.md`.
-- agent-of-empires: Shell-Ready Pattern + Status Detection
-- cmux: Community-Validierung tmux+worktree Pattern
-- recon: tmux-native Status Monitoring
-- claude-tmux: capture-pane Status Detection
-- #24947, #15553: Upstream-Blocker für Worker→Main
+- Live repro 2026-06-19 (`status-demo`, ESC-interrupted, full context, claude alive): hooks.json=`working`, `#{window_activity}` age 384s→975s (≫10s) → pre-fix `worker-cli status` = `working`, menubar = `idle` (diverged); post-fix = `limit reached`.
+- agent-of-empires: shell-ready pattern + status detection
+- cmux: community validation of the tmux+worktree pattern
+- recon: tmux-native status monitoring
+- claude-tmux: capture-pane status detection
+- #24947, #15553: upstream blockers for Worker→Main

@@ -26,7 +26,7 @@ Rule: anything forcefully/abnormally stopped — process alive-but-interrupted O
 
 ## Detection logic unchanged
 
-The `pane_dead` / process-tree / `window_activity` (>10s) checks in `_worker_detect_status` are correct and stay. Only the RETURNED token and its display changed (`idle-demoted`/`exited` → `limit reached`; internal representation is the literal string `limit reached`, safe because all comparison sites are quoted). The kill-while-working guard rationale (see `decisions/spawn.md`) is preserved and improved: a force-stopped worker no longer masquerades as `idle` (the original confusion) — it surfaces as `limit reached`, which is clearly actionable / killable.
+The `pane_dead` / process-tree / `window_activity` (>10s) checks in `_worker_detect_status` are correct and stay. Only the RETURNED token and its display changed (`idle-demoted`/`exited` → `limit reached`; internal representation is the literal string `limit reached`, safe because all comparison sites are quoted). The kill-while-working guard rationale is preserved and improved: a force-stopped worker no longer masquerades as `idle` (the original confusion) — it surfaces as `limit reached`, which is clearly actionable / killable.
 
 ## Superseded — context_pct (removed)
 
@@ -42,7 +42,7 @@ The whole function + its 4 call sites + the `usage()` help text ("context remain
 
 `opus/workers-1.md`, `workers-2.md`, `workers-3.md` stripped of every context-% / context-budget reference ("Low context (any remaining %)", "regardless of context %", "Y% Context", "Context-% visibility", "context blowout", "burn the worker through its context"). Replaced by strict what/how: a worker may die at its limit → status shows `limit reached` → spawn a successor; the reuse-vs-fresh decision is thematic continuity only. `global/tool-use.md` "Context window hygiene" (Opus's OWN output-redirection discipline) is a different concept and was deliberately left untouched.
 
-## Current state
+## Doc surfaces updated at the time
 
-- `decisions/spawn.md` — IST (status states; context_pct paragraph removed).
+- the spawn-architecture snapshot in this area (status states; context_pct paragraph removed)
 - `src/spawn/DOCS.md` — status-detection description.

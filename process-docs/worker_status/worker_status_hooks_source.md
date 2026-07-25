@@ -58,8 +58,7 @@ by the `exited` checks.
 > **SUPERSEDED (2026-06-19):** this accepted trade-off was reversed. The kill-while-working
 > guard requires forcefully-stopped workers to resolve to idle (an un-killable `working`
 > zombie is worse than the drift). A `#{window_activity}` demote was re-added (rename-proof
-> signal; the hooks.json path that caused the original drift is unchanged). See
-> `worker_force_stop_detection.md`.
+> signal; the hooks.json path that caused the original drift is unchanged).
 
 ### unknown is a verdict, not an error (return 0)
 
@@ -78,12 +77,11 @@ The lasting fragility is the hardcoded app-support path duplicated across two re
 `tmux_spawn.sh` references at the live hyphen path; that path must be treated as a frozen
 contract — a future rename requires updating both sides together.
 
-## Cross-reference
+## Scope note
 
 The activity-`hooks.json` consumed here is unrelated to Monitor_CC's `src/hooks/`
-tool-safety hooks. The hook taxonomy (CC-standard lifecycle events vs custom tool hooks;
-activity state file vs safety fire log) is documented in Monitor_CC
-`decisions/OldThemes/hook_taxonomy.md`.
+tool-safety hooks: the former is the CC-lifecycle activity state file, the latter a
+safety fire log — two separate hook families.
 
 ## Live verification (post-publish)
 
