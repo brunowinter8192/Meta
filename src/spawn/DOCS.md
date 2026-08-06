@@ -20,7 +20,7 @@ Invoked via `python3 -m src.spawn.spawn` by `worker-cli spawn`:
 **Reads:** tmux session list, proxy marker `/tmp/.monitor_cc_proxy_<session_id>`, project path, `~/Library/Application Support/com.brunowinter.monitor-cc-menubar/hooks.json` (working/idle source).
 **Writes:** tmux sessions, Ghostty windows, worker mitmproxy processes, `/tmp/worker-<name>.done` signal file.
 **Called by:** `~/.local/bin/worker-cli` (all subcommands via `source`); `spawn.py` (via subprocess for `spawn_claude_worker_from_file`).
-**Calls out:** tmux, osascript/Ghostty, mitmdump, `~/.local/bin/claude-114`.
+**Calls out:** tmux, osascript/Ghostty, mitmdump, `~/.local/bin/claude-223`.
 
 `worker_capture_clean NAME [PROJECT_PATH]` — captures pane, scopes to output since last real orchestrator `❯` prompt, applies clean filter (see `_capture_clean.py`), prints to stdout. Called by `worker-cli capture` (default). `worker_capture` (raw pane to file) called via `worker-cli capture --raw`.
 
