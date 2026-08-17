@@ -14,9 +14,9 @@ task, whose exit IS the wake-up (pull). Implemented as a new `wait` case in `bin
 A single idle sample can't rule out a sampling race at the exact hook-transition instant.
 Chose 5s poll interval, 3 consecutive idle samples required — 10s between the first and
 last confirming sample. 10s reuses the figure `_worker_detect_status` already relies on for
-its `window_activity` stale-check (see `process-docs/worker_status/worker_status_hooks_source.md`
-— WORKING_THRESHOLD_SECS=10 there) — an already-vetted "long enough to not be noise"
-constant in this codebase, not a new number invented for this feature.
+its `window_activity` stale-check (WORKING_THRESHOLD_SECS=10 — see the `process-docs/worker_status/`
+area) — an already-vetted "long enough to not be noise" constant in this codebase, not a new
+number invented for this feature.
 
 ## Fail-toward-waiting, everywhere
 
@@ -49,8 +49,8 @@ First test run: a fake tmux session with a genuinely `idle` hooks.json entry sti
 `WORKER_PURPOSE` via `tmux show-environment`, which exits non-zero when the var was never
 set. Under the script's `set -euo pipefail` (re-applied on every `source`), that bare
 `pipefail`d assignment aborts the whole function mid-loop with zero output — same failure
-class already documented in `worker_status_hooks_source.md` for the hooks.json read. Real
-spawned workers never hit this (`spawn_claude_worker` always sets both vars); only a
+class already documented for the hooks.json read in the `process-docs/worker_status/` area.
+Real spawned workers never hit this (`spawn_claude_worker` always sets both vars); only a
 hand-built test fixture that skips them does. Fixed in the test fixture (sets both vars
 right after `tmux new-session`, mirroring production), not in `tmux_spawn.sh` — out of this
 task's negative scope, and not a real production bug.
