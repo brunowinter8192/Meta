@@ -46,8 +46,12 @@ set_hook_status() {
         && mv "$tmp" "$HOOKS_FILE"
 }
 
-# --- fake worker: real tmux session (claude-dummy child, optional bg grandchild) + hooks entry ---
+# --- fake worker: real tmux session (claude-dummy child, optional persistent tooling grandchild) + hooks entry ---
 # create_worker NAME PROJ_DIR SESSION_ID STATUS BG(0|1)
+# BG=1: claude-dummy forks a persistent grandchild (simulates a long-lived tooling child — e.g.
+# pyright-langserver, the live incident this fixture regression-guards) that is NEVER killed
+# during a test using it — the handle-based bg-task check must ignore it entirely, unlike the
+# old process-tree walk this replaced (any grandchild = "busy", forever).
 create_worker() {
     local name="$1" proj_dir="$2" session_id="$3" status="$4" bg="$5"
     mkdir -p "$proj_dir"
@@ -55,14 +59,13 @@ create_worker() {
     tmux kill-session -t "$session" 2>/dev/null || true
     local wrap="$proj_dir/.wrap.sh"
     if [ "$bg" = "1" ]; then
-        # claude-dummy forks a bg child (the "live background task"), then blocks on it.
-        # Once that child is killed (kill_bg_grandchild), claude-dummy re-execs into a bare
-        # sleep — SAME pid, still named "claude-dummy", but now with zero children — so the
-        # claude-side process survives the grandchild's death instead of the whole chain
-        # collapsing (which would misreport as "limit reached" instead of a true idle+no-bg).
+        # claude-dummy stays alive as a real bash process (must NOT itself be exec'd away, or
+        # _worker_detect_status finds no "claude"-named descendant at all and misreports "limit
+        # reached" instead of "idle" — the tooling child is a genuine FORKED grandchild, not a
+        # further exec-replace of the claude-dummy identity).
         cat > "$wrap" <<'INNER'
 #!/bin/bash
-( exec -a claude-dummy bash -c 'sleep 100000 & wait; exec -a claude-dummy sleep 100000' ) &
+( exec -a claude-dummy bash -c '(exec -a pyright-langserver-dummy sleep 100000) & wait' ) &
 CLAUDE_PID=$!
 wait $CLAUDE_PID
 INNER
@@ -108,29 +111,60 @@ destroy_worker() {
     rm -rf "$proj_dir"
 }
 
-# kill_bg_grandchild NAME PROJ_DIR — terminates the live "background task" child under the
-# claude-dummy pid (used by test 5 to observe the idle+no-bg transition).
-kill_bg_grandchild() {
-    local name="$1" proj_dir="$2"
-    local session="worker-$(basename "$proj_dir")-$name"
-    local pane_pid
-    pane_pid=$(tmux display-message -t "${session}:^" -p "#{pane_pid}" 2>/dev/null) || return 0
-    local cpid
-    for cpid in $(pgrep -P "$pane_pid" 2>/dev/null || true); do
-        if ps -o command= -p "$cpid" 2>/dev/null | grep -q claude; then
-            local gcpid
-            for gcpid in $(pgrep -P "$cpid" 2>/dev/null || true); do
-                kill "$gcpid" 2>/dev/null || true
-            done
-        fi
-    done
+# real_tasks_dir PROJ_DIR SESSION_ID — resolved (/private/tmp on macOS) tasks dir path a fixture
+# worker's background tasks would live under; mirrors _wait_has_live_bg_task's own derivation.
+real_tasks_dir() {
+    local proj_dir="$1" session_id="$2"
+    local real_proj_dir encoded real_tmp
+    real_proj_dir=$(cd "$proj_dir" && pwd -P)
+    encoded=$(echo "$real_proj_dir" | tr '/_.' '-')
+    real_tmp=$(cd /tmp && pwd -P)
+    echo "${real_tmp}/claude-$(id -u)/${encoded}/${session_id}/tasks"
+}
+
+# raw_tasks_dir PROJ_DIR SESSION_ID — same as real_tasks_dir but WITHOUT resolving /tmp (stays
+# with the literal unresolved "/tmp/..." prefix) — used to deliberately open a fixture file via
+# the unresolved path while the hook internally resolves to /private/tmp/..., proving detection
+# still matches (same underlying file, OS-transparent symlink).
+raw_tasks_dir() {
+    local proj_dir="$1" session_id="$2"
+    local real_proj_dir encoded
+    real_proj_dir=$(cd "$proj_dir" && pwd -P)
+    encoded=$(echo "$real_proj_dir" | tr '/_.' '-')
+    echo "/tmp/claude-$(id -u)/${encoded}/${session_id}/tasks"
+}
+
+# start_fake_bg_task TASKS_DIR TASK_ID — opens a genuine long-lived write handle on
+# <TASKS_DIR>/<TASK_ID>.output (mirrors what Claude Code itself does for a real backgrounded Bash
+# call — `exec` preserves the just-opened FD across the image replace, so the resulting `sleep`
+# process itself holds the handle open, same PID `$!` captures). Records that pid to a sidecar
+# file for kill_fake_bg_task to clean up.
+start_fake_bg_task() {
+    local tdir="$1" task_id="$2"
+    mkdir -p "$tdir"
+    ( exec sleep 100000 > "$tdir/$task_id.output" ) &
+    disown
+    echo $! > "/tmp/${TEST_TAG}-fakebg-${task_id}.pid"
+}
+
+# kill_fake_bg_task TASK_ID — closes the handle opened by start_fake_bg_task.
+kill_fake_bg_task() {
+    local task_id="$1"
+    local pidfile="/tmp/${TEST_TAG}-fakebg-${task_id}.pid"
+    if [ -f "$pidfile" ]; then
+        kill "$(cat "$pidfile")" 2>/dev/null || true
+        rm -f "$pidfile"
+    fi
 }
 
 cleanup_all() {
     destroy_worker w1 "/tmp/${TEST_TAG}-1" "${TEST_TAG}-sess-1" 2>/dev/null || true
+    destroy_worker w1 "/tmp/${TEST_TAG}-1b" "${TEST_TAG}-sess-1b" 2>/dev/null || true
     destroy_worker w1 "/tmp/${TEST_TAG}-3a" "${TEST_TAG}-sess-3a" 2>/dev/null || true
     destroy_worker w1 "/tmp/${TEST_TAG}-4" "${TEST_TAG}-sess-4" 2>/dev/null || true
     destroy_worker w1 "/tmp/${TEST_TAG}-5" "${TEST_TAG}-sess-5" 2>/dev/null || true
+    destroy_worker w1 "/tmp/${TEST_TAG}-6" "${TEST_TAG}-sess-6" 2>/dev/null || true
+    kill_fake_bg_task "${TEST_TAG}task5" 2>/dev/null || true
     restore_hooks
 }
 trap cleanup_all EXIT
@@ -153,6 +187,24 @@ else
     fail "test1 idle-worker: reason='$OUT1' elapsed=${ELAPSED1}s (expected 'workers idle', 9-25s)"
 fi
 destroy_worker w1 "$PROJ1" "$SID1"
+
+# --- Test 1b (2026-08 incident regression): idle worker WITH a persistent tooling child (never
+# killed) -> must STILL exit promptly. Under the old process-tree walk this worker would never
+# have been detected as idle — every grandchild counted as "busy" forever, which is exactly the
+# live incident (pyright-langserver, 36+ min) this handle-based rewrite fixes. ---
+PROJ1B="/tmp/${TEST_TAG}-1b"
+SID1B="${TEST_TAG}-sess-1b"
+create_worker w1 "$PROJ1B" "$SID1B" idle 1 >/dev/null
+T0=$(date +%s)
+OUT1B=$(bash "$BIN" wait "$PROJ1B" --timeout 40)
+T1=$(date +%s)
+ELAPSED1B=$((T1 - T0))
+if [ "$OUT1B" = "workers idle" ] && [ "$ELAPSED1B" -ge 9 ] && [ "$ELAPSED1B" -le 25 ]; then
+    pass "test1b tooling-child-incident: reason='$OUT1B' elapsed=${ELAPSED1B}s (persistent grandchild correctly ignored)"
+else
+    fail "test1b tooling-child-incident: reason='$OUT1B' elapsed=${ELAPSED1B}s (expected 'workers idle', 9-25s — the incident regression)"
+fi
+destroy_worker w1 "$PROJ1B" "$SID1B"
 
 # --- Test 2: no worker + small timeout -> exits at timeout ---
 T0=$(date +%s)
@@ -212,32 +264,67 @@ fi
 rm -f "$OUT4_FILE"
 destroy_worker w1 "$PROJ4" "$SID4"
 
-# --- Test 5: idle worker WITH a live worker-side background task -> not done until it ends ---
+# --- Test 5: idle worker WITH a genuinely open *.output write handle -> holds until it closes.
+# Also covers the /tmp vs /private/tmp resolution gotcha: the handle is opened via the
+# UNRESOLVED raw_tasks_dir path while the hook internally resolves to /private/tmp/... ---
 PROJ5="/tmp/${TEST_TAG}-5"
 SID5="${TEST_TAG}-sess-5"
-create_worker w1 "$PROJ5" "$SID5" idle 1 >/dev/null
+create_worker w1 "$PROJ5" "$SID5" idle 0 >/dev/null
+TDIR_RAW=$(raw_tasks_dir "$PROJ5" "$SID5")
+TDIR_REAL=$(real_tasks_dir "$PROJ5" "$SID5")
+TASK_ID="${TEST_TAG}task5"
+
+case "$TDIR_REAL" in
+    /private/tmp/*)
+        pass "test5a tmp-resolution: real tasks dir resolves under /private/tmp ($TDIR_REAL)" ;;
+    *)
+        fail "test5a tmp-resolution: real tasks dir did NOT resolve under /private/tmp ($TDIR_REAL)" ;;
+esac
+
+start_fake_bg_task "$TDIR_RAW" "$TASK_ID"
+sleep 0.5
 OUT5_FILE="/tmp/${TEST_TAG}-5.out"
 bash "$BIN" wait "$PROJ5" --timeout 40 > "$OUT5_FILE" 2>&1 &
 P5=$!
 sleep 12
 if kill -0 "$P5" 2>/dev/null; then
-    pass "test5a live-bg-task: still waiting after 12s while bg task alive (idle alone did not trigger exit)"
+    pass "test5b open-handle: still waiting after 12s while .output handle open (opened via unresolved /tmp path, must be detected via the resolved /private/tmp path)"
 else
-    fail "test5a live-bg-task: exited early while bg task was still alive — $(cat "$OUT5_FILE")"
+    fail "test5b open-handle: exited early while handle was still open — $(cat "$OUT5_FILE")"
 fi
-kill_bg_grandchild w1 "$PROJ5"
+kill_fake_bg_task "$TASK_ID"
 T0=$(date +%s)
 wait "$P5"; RC5=$?
 T1=$(date +%s)
 OUT5=$(cat "$OUT5_FILE")
 ELAPSED5=$((T1 - T0))
 if [ "$OUT5" = "workers idle" ] && [ "$RC5" = 0 ] && [ "$ELAPSED5" -le 20 ]; then
-    pass "test5b live-bg-task: exited 'workers idle' ${ELAPSED5}s after bg task ended"
+    pass "test5c open-handle: exited 'workers idle' ${ELAPSED5}s after handle closed"
 else
-    fail "test5b live-bg-task: rc=$RC5 reason='$OUT5' elapsed=${ELAPSED5}s"
+    fail "test5c open-handle: rc=$RC5 reason='$OUT5' elapsed=${ELAPSED5}s"
 fi
 rm -f "$OUT5_FILE"
 destroy_worker w1 "$PROJ5" "$SID5"
+
+# --- Test 6: lsof unresolvable mid-check (PATH stripped of /usr/sbin) -> bg-check probe error ->
+# never reports "workers idle" even though the worker IS genuinely idle with zero real bg tasks,
+# ends in timeout. Isolates the bg-check's OWN error path (distinct from Test 4's status-check
+# target-vanishes case) — same PATH-stripping technique the (now-removed) block_timer_no_
+# worker_working hook's tmux-unresolvable case used. ---
+PROJ6="/tmp/${TEST_TAG}-6"
+SID6="${TEST_TAG}-sess-6"
+create_worker w1 "$PROJ6" "$SID6" idle 0 >/dev/null
+OUT6_FILE="/tmp/${TEST_TAG}-6.out"
+env PATH="/opt/homebrew/bin:/usr/bin:/bin" bash "$BIN" wait "$PROJ6" --timeout 12 > "$OUT6_FILE" 2>&1
+RC6=$?
+OUT6=$(cat "$OUT6_FILE")
+if [ "$OUT6" = "timeout" ] && [ "$RC6" = 0 ]; then
+    pass "test6 lsof-unresolvable: final reason='$OUT6' (never 'workers idle' despite a genuinely idle, bg-task-free worker)"
+else
+    fail "test6 lsof-unresolvable: rc=$RC6 reason='$OUT6' (expected 'timeout', never 'workers idle')"
+fi
+rm -f "$OUT6_FILE"
+destroy_worker w1 "$PROJ6" "$SID6"
 
 echo "=== $([ $RESULT -eq 0 ] && echo ALL PASSED || echo SOME FAILED) ==="
 exit $RESULT
