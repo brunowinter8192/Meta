@@ -20,6 +20,7 @@ usage: worker-cli <cmd> [args]
   merge <name>                                               — log + merge branch into current
   kill <name>                                                — tmux + worktree + branch cleanup (spawn + all registered cross-project)
   send <name> <message>                                      — send message to running worker
+  wait [project_path] [--timeout N]                          — block until all workers of the project go stably idle (default timeout 3300s)
   spawn <name> <prompt_file> <project_path> [model] [--no-worktree]
                                                              — spawn worker in git worktree
   revive <name>                                              — re-launch dead worker with --resume (full prior context)
@@ -158,6 +159,47 @@ encode_worktree_path() {
     local p="$1"
     p="${p//\//-}"; p="${p//\./-}"; p="${p//_/-}"
     echo "$p"
+}
+
+# --- wait helpers ---
+# Poll cadence + stability window for `wait`. Two consecutive idle samples aren't enough to
+# rule out a sampling race at the exact hook-transition instant; three samples 5s apart give
+# a 10s span between the first and last confirmation — reuses the same 10s figure
+# _worker_detect_status already relies on for its window_activity stale-check (worker_status_hooks_source.md),
+# an already-vetted "long enough to not be noise" constant in this codebase.
+_WAIT_POLL_INTERVAL=5
+_WAIT_STABLE_SAMPLES=3
+
+# _wait_has_live_bg_task NAME PROJECT_PATH
+#   Best-effort check for a worker-side backgrounded process still alive under the worker's
+#   `claude` PID (e.g. a `run_in_background` bash tool call) while hooks.json already reports
+#   idle (Stop hook fired at turn-end, independent of any detached background job).
+#   _worker_detect_status has no dedicated signal for this — it only checks whether *a* claude
+#   descendant exists, not whether that claude process itself still has live children. This
+#   reuses the same pane_pid -> claude-descendant walk one level deeper (read-only, does not
+#   touch tmux_spawn.sh) as a heuristic proxy, not a guaranteed-accurate detector: it can only
+#   see children still attached in the process tree, so a fully detached/double-forked
+#   background process would be invisible to it.
+#   Echoes "yes" (live task), "no" (none found), or "error" (probe failed — caller must treat
+#   as "yes", per the fail-toward-waiting contract) — never raises.
+_wait_has_live_bg_task() {
+    local name="$1" project="$2"
+    bash -c '
+        source "$1"
+        session=$(_worker_session_name "$2" "$3")
+        pane_pid=$(tmux display-message -t "${session}:^" -p "#{pane_pid}" 2>/dev/null) || { echo error; exit 0; }
+        [ -z "$pane_pid" ] && { echo error; exit 0; }
+        claude_pid=""
+        for cpid in $(pgrep -P "$pane_pid" 2>/dev/null || true); do
+            if ps -o command= -p "$cpid" 2>/dev/null | grep -q "claude"; then
+                claude_pid="$cpid"
+                break
+            fi
+        done
+        [ -z "$claude_pid" ] && { echo error; exit 0; }
+        grandchildren=$(pgrep -P "$claude_pid" 2>/dev/null || true)
+        if [ -n "$grandchildren" ]; then echo yes; else echo no; fi
+    ' _ "$SPAWN" "$project" "$name" 2>/dev/null || echo error
 }
 
 
@@ -347,6 +389,63 @@ case "$CMD" in
         PROJECT=$(resolve_worker_project "$NAME" "$OVERRIDE")
         _WORKER_MSG="$MESSAGE" bash -c 'source "$1" && worker_send "$2" "$_WORKER_MSG" "$3"' \
             _ "$SPAWN" "$NAME" "$PROJECT"
+        ;;
+    wait)
+        OVERRIDE=""
+        TIMEOUT=3300
+        while [ $# -gt 0 ]; do
+            case "$1" in
+                --timeout) TIMEOUT="${2:?worker-cli wait: --timeout needs a value}"; shift 2 ;;
+                --timeout=*) TIMEOUT="${1#--timeout=}"; shift ;;
+                *) OVERRIDE="$1"; shift ;;
+            esac
+        done
+        PROJECT=$(resolve_project_path "$OVERRIDE")
+        START_TS=$(date +%s)
+        STABLE_COUNT=0
+        while true; do
+            NOW=$(date +%s)
+            if [ $((NOW - START_TS)) -ge "$TIMEOUT" ]; then
+                echo "timeout"
+                exit 0
+            fi
+            # Best-effort listing — any failure (tmux hiccup, etc.) yields empty NAMES,
+            # which is handled identically to "no worker visible yet": keep waiting.
+            NAMES=$(bash -c "source \"$SPAWN\" && worker_list \"\$1\"" _ "$PROJECT" 2>/dev/null \
+                | awk '{print $1}' || true)
+            if [ -z "$NAMES" ]; then
+                STABLE_COUNT=0
+                sleep "$_WAIT_POLL_INTERVAL"
+                continue
+            fi
+            ALL_IDLE=1
+            while IFS= read -r WNAME; do
+                [ -z "$WNAME" ] && continue
+                STATUS=$(bash -c "source \"$SPAWN\" && worker_status \"\$1\" \"\$2\"" \
+                    _ "$WNAME" "$PROJECT" 2>/dev/null || echo "unknown")
+                # Only a verbatim "idle" counts — working/limit reached/unknown/probe-error
+                # all fall through to NOT idle, per the fail-toward-waiting contract.
+                if [ "$STATUS" != "idle" ]; then
+                    ALL_IDLE=0
+                    break
+                fi
+                BG=$(_wait_has_live_bg_task "$WNAME" "$PROJECT")
+                if [ "$BG" != "no" ]; then
+                    ALL_IDLE=0
+                    break
+                fi
+            done <<< "$NAMES"
+            if [ "$ALL_IDLE" = "1" ]; then
+                STABLE_COUNT=$((STABLE_COUNT + 1))
+            else
+                STABLE_COUNT=0
+            fi
+            if [ "$STABLE_COUNT" -ge "$_WAIT_STABLE_SAMPLES" ]; then
+                echo "workers idle"
+                exit 0
+            fi
+            sleep "$_WAIT_POLL_INTERVAL"
+        done
         ;;
     spawn)
         [ $# -lt 3 ] && { echo "worker-cli spawn: need <name> <prompt_file> <project_path> [model] [--no-worktree]" >&2; exit 2; }
