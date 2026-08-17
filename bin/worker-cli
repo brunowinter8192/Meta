@@ -171,34 +171,64 @@ _WAIT_POLL_INTERVAL=5
 _WAIT_STABLE_SAMPLES=3
 
 # _wait_has_live_bg_task NAME PROJECT_PATH
-#   Best-effort check for a worker-side backgrounded process still alive under the worker's
-#   `claude` PID (e.g. a `run_in_background` bash tool call) while hooks.json already reports
-#   idle (Stop hook fired at turn-end, independent of any detached background job).
-#   _worker_detect_status has no dedicated signal for this — it only checks whether *a* claude
-#   descendant exists, not whether that claude process itself still has live children. This
-#   reuses the same pane_pid -> claude-descendant walk one level deeper (read-only, does not
-#   touch tmux_spawn.sh) as a heuristic proxy, not a guaranteed-accurate detector: it can only
-#   see children still attached in the process tree, so a fully detached/double-forked
-#   background process would be invisible to it.
-#   Echoes "yes" (live task), "no" (none found), or "error" (probe failed — caller must treat
-#   as "yes", per the fail-toward-waiting contract) — never raises.
+#   Handle-based background-task check (2026-08, replaces a process-tree walk that produced a
+#   live false-positive incident: a persistent tooling child under the worker's claude pid —
+#   observed live, pyright-langserver running 36+ minutes — made every grandchild-count check
+#   read "busy" forever, so `wait` degraded to the timeout ceiling on any worker that ever spawned
+#   tooling). Mirrors monitor-cc's src/menubar/proc_cache.py (`_has_active_bg` /
+#   `_refresh_bg_task_cache`), NOT reimported: a session's backgrounded Bash task is in-progress
+#   iff some process holds an open WRITE handle on a *.output file under
+#   /tmp/claude-<uid>/<encoded-session-cwd>/<session-id>/tasks/ — the exact directory Claude Code
+#   itself writes background-task output into. LSP/MCP/tooling child processes never hold such a
+#   handle, so they never register here, unlike the old grandchild-count check.
+#   encoded/session_id derived exactly like _worker_detect_status (pane_current_path -> tr
+#   '/_.' '-' -> newest ~/.claude/projects/<encoded>/*.jsonl basename) — always the SAME session
+#   tmux_spawn.sh's own status check just resolved.
+#   /tmp -> /private/tmp (macOS symlink) resolved once via `cd /tmp && pwd -P` before building the
+#   tasks-dir path — mirrors _TASKS_BASE_REAL in the reference module (lsof reports the resolved
+#   form; live-confirmed real occupied task dirs on this machine report as /private/tmp/...).
+#   Scoped per-worker (`lsof +D <this session's tasks dir>` only) rather than the reference's one
+#   global scan per tick — deliberate simplification: that batching amortizes lsof across MANY
+#   sessions polled every tick in the menubar; here each call checks exactly one worker, so a
+#   directly-scoped call is simpler AND strictly narrower/faster (no manual prefix-filter needed,
+#   lsof's own +D traversal already guarantees scope). ~120ms per call, measured — cheap for the
+#   5s poll cadence.
+#   lsof's own exit code is NOT used as a signal: verified live that `lsof +D <dir> -Fn` can exit
+#   1 even when it DOES find open files (an observed lsof quirk on this system) — matches the
+#   reference module's own approach of parsing stdout unconditionally rather than gating on the
+#   subprocess return code. CRITICAL: `out=$(lsof ...)` MUST carry `|| true` — `source "$1"`
+#   (tmux_spawn.sh) re-applies ITS OWN `set -euo pipefail` to this same shell for everything after
+#   the source line; a bare assignment whose command substitution exits non-zero aborts the whole
+#   subshell immediately under inherited set -e (same failure class documented in
+#   worker_status_hooks_source.md) — without the guard, lsof's exit-1-on-success quirk above
+#   turned "tasks dir exists" into an unconditional "error" on every single call, live-caught via
+#   a `set -x` trace mid-debug (the assignment line printed, then the subshell silently died with
+#   no further trace and no output, which the outer `2>/dev/null || echo error` then reported).
+#   Echoes "yes" (open .output handle found), "no" (none found), or "error" (probe failed —
+#   caller must treat as "yes", per the fail-toward-waiting contract) — never raises.
 _wait_has_live_bg_task() {
     local name="$1" project="$2"
     bash -c '
         source "$1"
         session=$(_worker_session_name "$2" "$3")
-        pane_pid=$(tmux display-message -t "${session}:^" -p "#{pane_pid}" 2>/dev/null) || { echo error; exit 0; }
-        [ -z "$pane_pid" ] && { echo error; exit 0; }
-        claude_pid=""
-        for cpid in $(pgrep -P "$pane_pid" 2>/dev/null || true); do
-            if ps -o command= -p "$cpid" 2>/dev/null | grep -q "claude"; then
-                claude_pid="$cpid"
-                break
-            fi
-        done
-        [ -z "$claude_pid" ] && { echo error; exit 0; }
-        grandchildren=$(pgrep -P "$claude_pid" 2>/dev/null || true)
-        if [ -n "$grandchildren" ]; then echo yes; else echo no; fi
+        worktree=$(tmux display-message -t "${session}:^" -p "#{pane_current_path}" 2>/dev/null) || { echo error; exit 0; }
+        [ -z "$worktree" ] && { echo error; exit 0; }
+        encoded=$(echo "$worktree" | tr "/_." "-")
+        jsonl=$(ls -t "$HOME/.claude/projects/${encoded}"/*.jsonl 2>/dev/null | head -1)
+        [ -z "$jsonl" ] && { echo error; exit 0; }
+        session_id=$(basename "$jsonl" .jsonl)
+        command -v lsof >/dev/null 2>&1 || { echo error; exit 0; }
+        real_tmp=$(cd /tmp 2>/dev/null && pwd -P) || real_tmp="/tmp"
+        tasks_dir="${real_tmp}/claude-$(id -u)/${encoded}/${session_id}/tasks"
+        [ -d "$tasks_dir" ] || { echo no; exit 0; }
+        out=$(lsof +D "$tasks_dir" -Fn 2>/dev/null) || true
+        found=no
+        while IFS= read -r line; do
+            case "$line" in
+                n*.output) found=yes; break ;;
+            esac
+        done <<< "$out"
+        echo "$found"
     ' _ "$SPAWN" "$project" "$name" 2>/dev/null || echo error
 }
 
