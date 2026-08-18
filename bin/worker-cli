@@ -20,7 +20,7 @@ usage: worker-cli <cmd> [args]
   merge <name>                                               — log + merge branch into current
   kill <name>                                                — tmux + worktree + branch cleanup (spawn + all registered cross-project)
   send <name> <message>                                      — send message to running worker
-  wait [project_path] [--timeout N]                          — block until all workers of the project go stably idle (default timeout 3300s)
+  wait [project_path] [--timeout N]                          — block until all workers of the project go stably idle, or fast-exit if none are ever registered (default timeout 3300s)
   spawn <name> <prompt_file> <project_path> [model] [--no-worktree]
                                                              — spawn worker in git worktree
   revive <name>                                              — re-launch dead worker with --resume (full prior context)
@@ -169,6 +169,49 @@ encode_worktree_path() {
 # an already-vetted "long enough to not be noise" constant in this codebase.
 _WAIT_POLL_INTERVAL=5
 _WAIT_STABLE_SAMPLES=3
+
+# --- wait trace (2026-08-18: observability — a timeout previously degraded silently, no error,
+# no log line, indistinguishable from a legitimately long-running worker;
+# process-docs/worker_wait/bg_task_detection_handle_based_rewrite_2026-08-17.md) ---
+# One shared, growing file (not one per invocation, unlike worker_logger.sh's per-worker files)
+# so concurrent `wait` calls for the same project interleave chronologically, tagged by pid=$$ —
+# directly surfaces stacked/duplicate arms as a visible pattern. Same WORKER_LOGGER_DIR override
+# + default worker_logger.sh already uses (survives plugin-publish overwrites — same reasoning
+# applies here). Disable via WORKER_CLI_WAIT_TRACE=0.
+_WAIT_TRACE_ENABLED="${WORKER_CLI_WAIT_TRACE:-1}"
+_WAIT_TRACE_FILE="${WORKER_LOGGER_DIR:-$HOME/Documents/ai/Meta/blank/src/logs}/wait_trace.log"
+_WAIT_TRACE_MAX_LINES=20000
+_WAIT_TRACE_KEEP_LINES=10000
+
+# _wait_trace EVENT_LINE
+#   Append one already-formatted line (ISO timestamp prefixed here) to _WAIT_TRACE_FILE.
+#   Fail-open, always: worker-cli runs under `set -e` (line 5) — a tracing hiccup (disk full,
+#   permission, missing dir) must never abort the wait loop itself, so every step is explicitly
+#   `|| true`-guarded — same lesson as _wait_has_live_bg_task's own set -e/lsof-exit-code
+#   incident (bg_task_detection_handle_based_rewrite_2026-08-17.md).
+_wait_trace() {
+    [ "$_WAIT_TRACE_ENABLED" = "1" ] || return 0
+    echo "$(date -Iseconds) $1" >> "$_WAIT_TRACE_FILE" 2>/dev/null || true
+}
+
+# _wait_trace_init — mkdir -p the trace dir; trim the shared file if it has grown past
+# _WAIT_TRACE_MAX_LINES (keeps the most recent _WAIT_TRACE_KEEP_LINES). Called once per `wait`
+# invocation, before the poll loop — bounds growth ACROSS invocations (a single invocation is
+# already self-bounded: timeout/poll-interval x worker-count, a few thousand lines at worst).
+# Fail-open throughout — see _wait_trace.
+_wait_trace_init() {
+    [ "$_WAIT_TRACE_ENABLED" = "1" ] || return 0
+    mkdir -p "$(dirname "$_WAIT_TRACE_FILE")" 2>/dev/null || return 0
+    if [ -f "$_WAIT_TRACE_FILE" ]; then
+        local lines
+        lines=$(wc -l < "$_WAIT_TRACE_FILE" 2>/dev/null || echo 0)
+        lines="${lines// /}"
+        if [ -n "$lines" ] && [ "$lines" -gt "$_WAIT_TRACE_MAX_LINES" ] 2>/dev/null; then
+            tail -n "$_WAIT_TRACE_KEEP_LINES" "$_WAIT_TRACE_FILE" > "${_WAIT_TRACE_FILE}.tmp" 2>/dev/null \
+                && mv "${_WAIT_TRACE_FILE}.tmp" "$_WAIT_TRACE_FILE" 2>/dev/null || true
+        fi
+    fi
+}
 
 # _wait_has_live_bg_task NAME PROJECT_PATH
 #   Handle-based background-task check (2026-08, replaces a process-tree walk that produced a
@@ -431,23 +474,44 @@ case "$CMD" in
             esac
         done
         PROJECT=$(resolve_project_path "$OVERRIDE")
+        _WAIT_TRACE_TAG="pid=$$ project=$(basename "$PROJECT")"
+        _wait_trace_init
+        _wait_trace "$_WAIT_TRACE_TAG event=start timeout=$TIMEOUT"
         START_TS=$(date +%s)
         STABLE_COUNT=0
+        EMPTY_COUNT=0
         while true; do
             NOW=$(date +%s)
-            if [ $((NOW - START_TS)) -ge "$TIMEOUT" ]; then
+            ELAPSED=$((NOW - START_TS))
+            if [ "$ELAPSED" -ge "$TIMEOUT" ]; then
+                _wait_trace "$_WAIT_TRACE_TAG event=exit reason=timeout elapsed=$ELAPSED"
                 echo "timeout"
                 exit 0
             fi
             # Best-effort listing — any failure (tmux hiccup, etc.) yields empty NAMES,
-            # which is handled identically to "no worker visible yet": keep waiting.
+            # which is handled identically to "no worker visible yet": keep waiting. An empty
+            # streak is itself now a stabilizable state (see EMPTY_COUNT below) — same grace
+            # window as the idle-transition case, not a separate new threshold.
             NAMES=$(bash -c "source \"$SPAWN\" && worker_list \"\$1\"" _ "$PROJECT" 2>/dev/null \
                 | awk '{print $1}' || true)
             if [ -z "$NAMES" ]; then
                 STABLE_COUNT=0
+                EMPTY_COUNT=$((EMPTY_COUNT + 1))
+                _wait_trace "$_WAIT_TRACE_TAG event=decision empty=1 empty_count=$EMPTY_COUNT elapsed=$ELAPSED"
+                # Zero workers visible for _WAIT_STABLE_SAMPLES consecutive polls (same 5s-poll/
+                # 3-sample window already trusted for the idle transition) -> exit fast instead of
+                # grinding to the full timeout. The grace window (not an immediate exit) absorbs a
+                # spawn-registration race: a worker appearing mid-window resets EMPTY_COUNT to 0
+                # below and falls through to normal idle-tracking, no special-casing needed.
+                if [ "$EMPTY_COUNT" -ge "$_WAIT_STABLE_SAMPLES" ]; then
+                    _wait_trace "$_WAIT_TRACE_TAG event=exit reason=no_workers elapsed=$ELAPSED"
+                    echo "no workers"
+                    exit 0
+                fi
                 sleep "$_WAIT_POLL_INTERVAL"
                 continue
             fi
+            EMPTY_COUNT=0
             ALL_IDLE=1
             while IFS= read -r WNAME; do
                 [ -z "$WNAME" ] && continue
@@ -456,10 +520,12 @@ case "$CMD" in
                 # Only a verbatim "idle" counts — working/limit reached/unknown/probe-error
                 # all fall through to NOT idle, per the fail-toward-waiting contract.
                 if [ "$STATUS" != "idle" ]; then
+                    _wait_trace "$_WAIT_TRACE_TAG event=poll worker=$WNAME status=${STATUS// /_} bg=-"
                     ALL_IDLE=0
                     break
                 fi
                 BG=$(_wait_has_live_bg_task "$WNAME" "$PROJECT")
+                _wait_trace "$_WAIT_TRACE_TAG event=poll worker=$WNAME status=${STATUS// /_} bg=$BG"
                 if [ "$BG" != "no" ]; then
                     ALL_IDLE=0
                     break
@@ -470,7 +536,9 @@ case "$CMD" in
             else
                 STABLE_COUNT=0
             fi
+            _wait_trace "$_WAIT_TRACE_TAG event=decision all_idle=$ALL_IDLE stable_count=$STABLE_COUNT elapsed=$ELAPSED"
             if [ "$STABLE_COUNT" -ge "$_WAIT_STABLE_SAMPLES" ]; then
+                _wait_trace "$_WAIT_TRACE_TAG event=exit reason=workers_idle elapsed=$ELAPSED"
                 echo "workers idle"
                 exit 0
             fi
