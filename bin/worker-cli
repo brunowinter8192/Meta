@@ -20,7 +20,7 @@ usage: worker-cli <cmd> [args]
   merge <name>                                               — log + merge branch into current
   kill <name>                                                — tmux + worktree + branch cleanup (spawn + all registered cross-project)
   send <name> <message>                                      — send message to running worker
-  wait [project_path] [--timeout N]                          — block until all workers of the project go stably idle, or fast-exit if none are ever registered (default timeout 3300s)
+  wait [project_path] [--timeout N]                          — block until all workers of the project go stably idle, wake early on a stably terminal worker (unknown/limit reached — 'worker terminal'), or fast-exit if none are ever registered (default timeout 3300s)
   spawn <name> <prompt_file> <project_path> [model] [--no-worktree]
                                                              — spawn worker in git worktree
   revive <name>                                              — re-launch dead worker with --resume (full prior context)
@@ -512,32 +512,63 @@ case "$CMD" in
                 continue
             fi
             EMPTY_COUNT=0
-            ALL_IDLE=1
+            ALL_NONBLOCKING=1
+            ANY_TERMINAL=0
             while IFS= read -r WNAME; do
                 [ -z "$WNAME" ] && continue
                 STATUS=$(bash -c "source \"$SPAWN\" && worker_status \"\$1\" \"\$2\"" \
                     _ "$WNAME" "$PROJECT" 2>/dev/null || echo "unknown")
-                # Only a verbatim "idle" counts — working/limit reached/unknown/probe-error
-                # all fall through to NOT idle, per the fail-toward-waiting contract.
-                if [ "$STATUS" != "idle" ]; then
-                    _wait_trace "$_WAIT_TRACE_TAG event=poll worker=$WNAME status=${STATUS// /_} bg=-"
-                    ALL_IDLE=0
-                    break
-                fi
-                BG=$(_wait_has_live_bg_task "$WNAME" "$PROJECT")
-                _wait_trace "$_WAIT_TRACE_TAG event=poll worker=$WNAME status=${STATUS// /_} bg=$BG"
-                if [ "$BG" != "no" ]; then
-                    ALL_IDLE=0
-                    break
-                fi
+                # Whitelist classification (2026-08-19 incident: verbatim "unknown" forever on a
+                # silently-dead worker held `wait` to the timeout ceiling). Only "idle" and the
+                # two verified-terminal strings ("limit reached", "unknown" — the closed
+                # vocabulary _worker_detect_status/worker_status actually return, see
+                # process-docs/worker_wait/) are non-blocking; "working" and any future/
+                # unrecognized status fall through to the default arm and stay blocking —
+                # fail-toward-waiting is preserved for anything not explicitly whitelisted here.
+                case "$STATUS" in
+                    idle)
+                        # Only a verbatim "idle" gets the bg-task probe — a worker still
+                        # coordinating a background task isn't really done.
+                        BG=$(_wait_has_live_bg_task "$WNAME" "$PROJECT")
+                        if [ "$BG" != "no" ]; then
+                            _wait_trace "$_WAIT_TRACE_TAG event=poll worker=$WNAME status=idle bg=$BG class=busy"
+                            ALL_NONBLOCKING=0
+                            break
+                        fi
+                        _wait_trace "$_WAIT_TRACE_TAG event=poll worker=$WNAME status=idle bg=no class=idle"
+                        ;;
+                    "limit reached"|unknown)
+                        # Terminal: the coordinating claude process is presumed gone/stuck and
+                        # will never transition back to working on its own — a dead worker needs
+                        # orchestrator intervention, not more waiting. Bg-task probe deliberately
+                        # SKIPPED here: its own tmux/jsonl lookups would very plausibly fail for a
+                        # genuinely dead/limited session too (-> "error" -> busy under its own
+                        # fail-toward-waiting contract), which would silently re-trap `wait` in
+                        # the exact "blocks forever on an unresolvable probe" failure this whole
+                        # change fixes. An orphaned bg process surviving its dead coordinator
+                        # doesn't change that the orchestrator must intervene either way.
+                        ANY_TERMINAL=1
+                        _wait_trace "$_WAIT_TRACE_TAG event=poll worker=$WNAME status=${STATUS// /_} bg=- class=terminal"
+                        ;;
+                    *)
+                        _wait_trace "$_WAIT_TRACE_TAG event=poll worker=$WNAME status=${STATUS// /_} bg=- class=busy"
+                        ALL_NONBLOCKING=0
+                        break
+                        ;;
+                esac
             done <<< "$NAMES"
-            if [ "$ALL_IDLE" = "1" ]; then
+            if [ "$ALL_NONBLOCKING" = "1" ]; then
                 STABLE_COUNT=$((STABLE_COUNT + 1))
             else
                 STABLE_COUNT=0
             fi
-            _wait_trace "$_WAIT_TRACE_TAG event=decision all_idle=$ALL_IDLE stable_count=$STABLE_COUNT elapsed=$ELAPSED"
+            _wait_trace "$_WAIT_TRACE_TAG event=decision all_nonblocking=$ALL_NONBLOCKING any_terminal=$ANY_TERMINAL stable_count=$STABLE_COUNT elapsed=$ELAPSED"
             if [ "$STABLE_COUNT" -ge "$_WAIT_STABLE_SAMPLES" ]; then
+                if [ "$ANY_TERMINAL" = "1" ]; then
+                    _wait_trace "$_WAIT_TRACE_TAG event=exit reason=worker_terminal elapsed=$ELAPSED"
+                    echo "worker terminal"
+                    exit 0
+                fi
                 _wait_trace "$_WAIT_TRACE_TAG event=exit reason=workers_idle elapsed=$ELAPSED"
                 echo "workers idle"
                 exit 0

@@ -101,6 +101,58 @@ INNER
     echo "$session"
 }
 
+# create_worker_no_hook NAME PROJ_DIR SESSION_ID
+#   Mirrors create_worker (claude-dummy child alive + JSONL present) but deliberately skips
+#   set_hook_status — no hooks.json entry ever exists for this session_id, reproducing the live
+#   incident's shape: session/pane ALIVE (tmux session found by worker_list, claude-dummy child
+#   present), status stuck on verbatim "unknown" forever ("no hook entry" branch in
+#   _worker_detect_status). Distinct from Test 4's session-GONE fixture (tmux session itself
+#   killed — routes through the empty-NAMES path instead, untouched by this feature).
+create_worker_no_hook() {
+    local name="$1" proj_dir="$2" session_id="$3"
+    mkdir -p "$proj_dir"
+    local session="worker-$(basename "$proj_dir")-$name"
+    tmux kill-session -t "$session" 2>/dev/null || true
+    local wrap="$proj_dir/.wrap.sh"
+    cat > "$wrap" <<'INNER'
+#!/bin/bash
+( exec -a claude-dummy sleep 100000 ) &
+CLAUDE_PID=$!
+wait $CLAUDE_PID
+INNER
+    chmod +x "$wrap"
+    tmux new-session -d -s "$session" -c "$proj_dir" "bash $wrap" \; \
+        set-option -p -t "$session" remain-on-exit on
+    tmux set-environment -t "$session" WORKER_SPAWNED "$(date +%H:%M)"
+    tmux set-environment -t "$session" WORKER_PURPOSE "test fixture"
+    sleep 0.5
+    local real_proj_dir encoded
+    real_proj_dir=$(cd "$proj_dir" && pwd -P)
+    encoded=$(echo "$real_proj_dir" | tr '/_.' '-')
+    mkdir -p "$HOME/.claude/projects/$encoded"
+    touch "$HOME/.claude/projects/$encoded/$session_id.jsonl"
+    # Deliberately no set_hook_status call.
+    echo "$session"
+}
+
+# create_worker_limit_reached NAME PROJ_DIR
+#   Wrapper exits immediately (no claude-dummy child ever forked); pane stays alive via
+#   remain-on-exit, so _worker_detect_status's process-tree check (no children under pane_pid)
+#   hits the "limit reached" branch directly — returns before the JSONL/hooks lookups, so
+#   neither is needed for this fixture.
+create_worker_limit_reached() {
+    local name="$1" proj_dir="$2"
+    mkdir -p "$proj_dir"
+    local session="worker-$(basename "$proj_dir")-$name"
+    tmux kill-session -t "$session" 2>/dev/null || true
+    tmux new-session -d -s "$session" -c "$proj_dir" "true" \; \
+        set-option -p -t "$session" remain-on-exit on
+    tmux set-environment -t "$session" WORKER_SPAWNED "$(date +%H:%M)"
+    tmux set-environment -t "$session" WORKER_PURPOSE "test fixture"
+    sleep 0.5
+    echo "$session"
+}
+
 # destroy_worker NAME PROJ_DIR SESSION_ID
 destroy_worker() {
     local name="$1" proj_dir="$2" session_id="$3"
@@ -168,7 +220,13 @@ cleanup_all() {
     destroy_worker w1 "/tmp/${TEST_TAG}-4" "${TEST_TAG}-sess-4" 2>/dev/null || true
     destroy_worker w1 "/tmp/${TEST_TAG}-5" "${TEST_TAG}-sess-5" 2>/dev/null || true
     destroy_worker w1 "/tmp/${TEST_TAG}-6" "${TEST_TAG}-sess-6" 2>/dev/null || true
+    destroy_worker w1 "/tmp/${TEST_TAG}-7" "${TEST_TAG}-sess-7" 2>/dev/null || true
+    destroy_worker w1 "/tmp/${TEST_TAG}-8" "${TEST_TAG}-sess-8" 2>/dev/null || true
+    destroy_worker wA "/tmp/${TEST_TAG}-9" "${TEST_TAG}-sess-9a" 2>/dev/null || true
+    destroy_worker wB "/tmp/${TEST_TAG}-9" "${TEST_TAG}-sess-9b" 2>/dev/null || true
+    destroy_worker w1 "/tmp/${TEST_TAG}-10" "${TEST_TAG}-sess-10" 2>/dev/null || true
     kill_fake_bg_task "${TEST_TAG}task5" 2>/dev/null || true
+    kill_fake_bg_task "${TEST_TAG}task10" 2>/dev/null || true
     restore_hooks
 }
 trap cleanup_all EXIT
@@ -359,6 +417,107 @@ else
 fi
 rm -f "$OUT6_FILE"
 destroy_worker w1 "$PROJ6" "$SID6"
+
+# --- Test 7 (2026-08-19 incident regression): session ALIVE, status stuck on verbatim "unknown"
+# forever (no hooks.json entry ever populated) -> `wait` must exit promptly with "worker
+# terminal", not grind to the timeout ceiling — this is the exact live incident (a dead worker's
+# claude process silently gone, worker_status returning "unknown" on every poll forever). Trace
+# must show class=terminal on the poll line and reason=worker_terminal on the exit line. ---
+PROJ7="/tmp/${TEST_TAG}-7"
+SID7="${TEST_TAG}-sess-7"
+create_worker_no_hook w1 "$PROJ7" "$SID7" >/dev/null
+TRACE_SIZE_BEFORE7=$([ -f "$TRACE_FILE" ] && wc -c < "$TRACE_FILE" || echo 0)
+T0=$(date +%s)
+OUT7=$(bash "$BIN" wait "$PROJ7" --timeout 40)
+T1=$(date +%s)
+ELAPSED7=$((T1 - T0))
+if [ "$OUT7" = "worker terminal" ] && [ "$ELAPSED7" -ge 9 ] && [ "$ELAPSED7" -le 25 ]; then
+    pass "test7a stuck-unknown-incident: reason='$OUT7' elapsed=${ELAPSED7}s"
+else
+    fail "test7a stuck-unknown-incident: reason='$OUT7' elapsed=${ELAPSED7}s (expected 'worker terminal', 9-25s)"
+fi
+if [ -f "$TRACE_FILE" ]; then
+    TRACE_NEW7=$(tail -c "+$((TRACE_SIZE_BEFORE7 + 1))" "$TRACE_FILE")
+    if [[ "$TRACE_NEW7" == *"class=terminal"* ]] && [[ "$TRACE_NEW7" == *"event=exit reason=worker_terminal"* ]]; then
+        pass "test7b trace-terminal: new trace lines contain class=terminal and event=exit reason=worker_terminal"
+    else
+        fail "test7b trace-terminal: expected class=terminal + event=exit reason=worker_terminal, got: $TRACE_NEW7"
+    fi
+else
+    fail "test7b trace-terminal: $TRACE_FILE does not exist after a wait run"
+fi
+destroy_worker w1 "$PROJ7" "$SID7"
+
+# --- Test 8: session ALIVE, status stuck on "limit reached" (wrapper exits immediately, zero
+# children, pane held open by remain-on-exit) -> exits "worker terminal" promptly. ---
+PROJ8="/tmp/${TEST_TAG}-8"
+create_worker_limit_reached w1 "$PROJ8" >/dev/null
+T0=$(date +%s)
+OUT8=$(bash "$BIN" wait "$PROJ8" --timeout 40)
+T1=$(date +%s)
+ELAPSED8=$((T1 - T0))
+if [ "$OUT8" = "worker terminal" ] && [ "$ELAPSED8" -ge 9 ] && [ "$ELAPSED8" -le 25 ]; then
+    pass "test8 stuck-limit-reached: reason='$OUT8' elapsed=${ELAPSED8}s"
+else
+    fail "test8 stuck-limit-reached: reason='$OUT8' elapsed=${ELAPSED8}s (expected 'worker terminal', 9-25s)"
+fi
+destroy_worker w1 "$PROJ8" "${TEST_TAG}-sess-8"
+
+# --- Test 9: mixed project — one worker terminal (limit reached) from the start, one worker
+# genuinely "working" -> `wait` must NOT exit early (terminal folds into "non-blocking" but a
+# real busy worker still blocks). Once the working worker finishes (flipped to idle), `wait`
+# exits "worker terminal" (not "workers idle") because the terminal worker is still there —
+# validates fold-in + exit-line precedence together. ---
+PROJ9="/tmp/${TEST_TAG}-9"
+SID9B="${TEST_TAG}-sess-9b"
+create_worker_limit_reached wA "$PROJ9" >/dev/null
+create_worker wB "$PROJ9" "$SID9B" working 0 >/dev/null
+OUT9_FILE="/tmp/${TEST_TAG}-9.out"
+bash "$BIN" wait "$PROJ9" --timeout 40 > "$OUT9_FILE" 2>&1 &
+P9=$!
+sleep 5
+if kill -0 "$P9" 2>/dev/null; then
+    pass "test9a mixed-still-blocks: wait process still alive after 5s (terminal worker did not short-circuit the still-busy worker)"
+else
+    fail "test9a mixed-still-blocks: wait process already exited early — $(cat "$OUT9_FILE")"
+fi
+set_hook_status "$SID9B" idle "$PROJ9"
+T0=$(date +%s)
+wait "$P9"; RC9=$?
+T1=$(date +%s)
+OUT9=$(cat "$OUT9_FILE")
+ELAPSED9=$((T1 - T0))
+if [ "$OUT9" = "worker terminal" ] && [ "$RC9" = 0 ] && [ "$ELAPSED9" -le 25 ]; then
+    pass "test9b mixed-exit-precedence: exited 'worker terminal' ${ELAPSED9}s after the busy worker went idle (not 'workers idle')"
+else
+    fail "test9b mixed-exit-precedence: rc=$RC9 reason='$OUT9' elapsed=${ELAPSED9}s (expected 'worker terminal')"
+fi
+rm -f "$OUT9_FILE"
+destroy_worker wA "$PROJ9" "${TEST_TAG}-sess-9a"
+destroy_worker wB "$PROJ9" "$SID9B"
+
+# --- Test 10: terminal worker ("unknown") WITH a genuinely open *.output write handle (an
+# orphaned bg process outliving its dead coordinator) -> still exits "worker terminal" promptly,
+# NOT held open until the handle closes — regression-guards the deliberate design decision to
+# skip the bg-task probe for terminal statuses (unlike Test 5's idle+bg case, which DOES hold). ---
+PROJ10="/tmp/${TEST_TAG}-10"
+SID10="${TEST_TAG}-sess-10"
+create_worker_no_hook w1 "$PROJ10" "$SID10" >/dev/null
+TDIR_RAW10=$(raw_tasks_dir "$PROJ10" "$SID10")
+TASK_ID10="${TEST_TAG}task10"
+start_fake_bg_task "$TDIR_RAW10" "$TASK_ID10"
+sleep 0.5
+T0=$(date +%s)
+OUT10=$(bash "$BIN" wait "$PROJ10" --timeout 40)
+T1=$(date +%s)
+ELAPSED10=$((T1 - T0))
+if [ "$OUT10" = "worker terminal" ] && [ "$ELAPSED10" -ge 9 ] && [ "$ELAPSED10" -le 25 ]; then
+    pass "test10 terminal-bg-check-skipped: reason='$OUT10' elapsed=${ELAPSED10}s (open handle correctly ignored for a terminal worker)"
+else
+    fail "test10 terminal-bg-check-skipped: reason='$OUT10' elapsed=${ELAPSED10}s (expected 'worker terminal', 9-25s — bg-check must be skipped for terminal statuses)"
+fi
+kill_fake_bg_task "$TASK_ID10"
+destroy_worker w1 "$PROJ10" "$SID10"
 
 echo "=== $([ $RESULT -eq 0 ] && echo ALL PASSED || echo SOME FAILED) ==="
 exit $RESULT
