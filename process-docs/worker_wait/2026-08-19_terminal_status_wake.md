@@ -15,10 +15,10 @@ function body line by line (`tmux_spawn.sh:103-239`), not inferred from the usag
 
 ## `unknown` is transient-by-design — the tension, resolved by cost asymmetry
 
-`process-docs/worker_status/worker_status_three_state.md` explicitly documents `unknown` as
-"the honest no-data-yet fallback during spawn-init... NOT one of the three decision states"
-— i.e. designed to be transient (fresh spawn before its JSONL/hook entry exists), not a
-peer of `limit reached` (which IS one of the three real decision states, "anything
+The `process-docs/worker_status/` area explicitly documents `unknown` as "the honest
+no-data-yet fallback during spawn-init... NOT one of the three decision states" — i.e.
+designed to be transient (fresh spawn before its JSONL/hook entry exists), not a peer of
+`limit reached` (which IS one of the three real decision states, "anything
 forcefully/abnormally stopped... collapses into `limit reached`").
 
 This directly conflicts with folding bare `unknown` into terminal-ok on the SAME 15s
