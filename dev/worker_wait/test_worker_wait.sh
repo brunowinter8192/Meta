@@ -10,6 +10,10 @@ PLUGIN_ROOT="$(cd "$SELF_DIR/../.." && pwd)"
 BIN="$PLUGIN_ROOT/bin/worker-cli"
 HOOKS_FILE="$HOME/Library/Application Support/com.brunowinter.monitor-cc-menubar/hooks.json"
 HOOKS_BACKUP="/tmp/wait-test-hooks-backup-$$.json"
+# Shared, growing, gitignored trace file `wait` itself writes to (C1, 2026-08-18) — real default
+# path, not test-isolated (same file real live wait invocations use); checked via a before/after
+# size diff, never overwritten or truncated by this suite.
+TRACE_FILE="${WORKER_LOGGER_DIR:-$HOME/Documents/ai/Meta/blank/src/logs}/wait_trace.log"
 RESULT=0
 TEST_TAG="waittest$$"
 
@@ -177,6 +181,7 @@ echo "=== worker-cli wait — integration tests ==="
 PROJ1="/tmp/${TEST_TAG}-1"
 SID1="${TEST_TAG}-sess-1"
 create_worker w1 "$PROJ1" "$SID1" idle 0 >/dev/null
+TRACE_SIZE_BEFORE1=$([ -f "$TRACE_FILE" ] && wc -c < "$TRACE_FILE" || echo 0)
 T0=$(date +%s)
 OUT1=$(bash "$BIN" wait "$PROJ1" --timeout 40)
 T1=$(date +%s)
@@ -185,6 +190,18 @@ if [ "$OUT1" = "workers idle" ] && [ "$ELAPSED1" -ge 9 ] && [ "$ELAPSED1" -le 25
     pass "test1 idle-worker: reason='$OUT1' elapsed=${ELAPSED1}s"
 else
     fail "test1 idle-worker: reason='$OUT1' elapsed=${ELAPSED1}s (expected 'workers idle', 9-25s)"
+fi
+
+# --- Test 1c (C1, 2026-08-18): trace file exists and records this run's start+exit ---
+if [ -f "$TRACE_FILE" ]; then
+    TRACE_NEW1=$(tail -c "+$((TRACE_SIZE_BEFORE1 + 1))" "$TRACE_FILE")
+    if [[ "$TRACE_NEW1" == *"event=start"* ]] && [[ "$TRACE_NEW1" == *"event=exit reason=workers_idle"* ]]; then
+        pass "test1c trace-observability: new trace lines contain event=start and event=exit"
+    else
+        fail "test1c trace-observability: expected event=start + event=exit in new trace lines, got: $TRACE_NEW1"
+    fi
+else
+    fail "test1c trace-observability: $TRACE_FILE does not exist after a wait run"
 fi
 destroy_worker w1 "$PROJ1" "$SID1"
 
@@ -206,15 +223,32 @@ else
 fi
 destroy_worker w1 "$PROJ1B" "$SID1B"
 
-# --- Test 2: no worker + small timeout -> exits at timeout ---
+# --- Test 2 (C3, 2026-08-18 contract change): no worker ever registered + timeout long enough
+# for the empty-NAMES grace window to win -> fast-exits "no workers" well before the ceiling.
+# Same 3-sample/5s-poll stability window already trusted for the idle transition (not a new
+# threshold) — was: "no worker + small timeout -> exits at timeout" (the pre-C3 contract, when
+# empty NAMES had no fast path at all and every zero-worker `wait` ran to the full ceiling). ---
 T0=$(date +%s)
-OUT2=$(bash "$BIN" wait "/tmp/${TEST_TAG}-nonexistent" --timeout 6)
+OUT2=$(bash "$BIN" wait "/tmp/${TEST_TAG}-nonexistent" --timeout 20)
 T1=$(date +%s)
 ELAPSED2=$((T1 - T0))
-if [ "$OUT2" = "timeout" ] && [ "$ELAPSED2" -ge 6 ] && [ "$ELAPSED2" -le 15 ]; then
-    pass "test2 no-worker-timeout: reason='$OUT2' elapsed=${ELAPSED2}s"
+if [ "$OUT2" = "no workers" ] && [ "$ELAPSED2" -ge 9 ] && [ "$ELAPSED2" -le 20 ]; then
+    pass "test2 no-worker-fast-exit: reason='$OUT2' elapsed=${ELAPSED2}s"
 else
-    fail "test2 no-worker-timeout: reason='$OUT2' elapsed=${ELAPSED2}s (expected 'timeout', 6-15s)"
+    fail "test2 no-worker-fast-exit: reason='$OUT2' elapsed=${ELAPSED2}s (expected 'no workers', 9-20s)"
+fi
+
+# --- Test 2b (C3, 2026-08-18): timeout SHORTER than the empty-NAMES grace window -> the ceiling
+# still wins cleanly, proving the two exit paths don't interfere (whichever threshold is hit
+# first wins, coarse to the 5s poll granularity — same documented cost Test 4 already accepts). ---
+T0=$(date +%s)
+OUT2B=$(bash "$BIN" wait "/tmp/${TEST_TAG}-nonexistent-2b" --timeout 3)
+T1=$(date +%s)
+ELAPSED2B=$((T1 - T0))
+if [ "$OUT2B" = "timeout" ] && [ "$ELAPSED2B" -ge 3 ] && [ "$ELAPSED2B" -le 10 ]; then
+    pass "test2b timeout-shorter-than-grace: reason='$OUT2B' elapsed=${ELAPSED2B}s"
+else
+    fail "test2b timeout-shorter-than-grace: reason='$OUT2B' elapsed=${ELAPSED2B}s (expected 'timeout', 3-10s)"
 fi
 
 # --- Test 3: two concurrent wait processes exit cleanly on the same idle transition ---
