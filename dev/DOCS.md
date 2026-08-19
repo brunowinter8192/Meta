@@ -10,5 +10,6 @@ Development scripts for testing, debugging, and experimentation related to the i
 - [worker_spawn/DOCS.md](worker_spawn/DOCS.md) — spawn-flow smoke tests
 - [worker_status/DOCS.md](worker_status/DOCS.md) — status-detection smoke tests
 - [worker_wait/DOCS.md](worker_wait/DOCS.md) — `worker-cli wait` integration tests
+- [worker_janitor/DOCS.md](worker_janitor/DOCS.md) — `worker-cli janitor` stale-worker cleanup smoke test
 - [desktop_targeting/DOCS.md](desktop_targeting/DOCS.md) — space-move probe + report (`desktop_targeting/md/`)
 - [cc_hooks/DOCS.md](cc_hooks/DOCS.md) — CC hook-input inspection helpers

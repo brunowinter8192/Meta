@@ -26,6 +26,8 @@ usage: worker-cli <cmd> [args]
   revive <name>                                              — re-launch dead worker with --resume (full prior context)
   worktree <name> <target-repo> [branch]                    — create + register cross-project worktree (default branch=<name>)
   worktree-rm <target-repo> <name> [branch]                 — remove cross-project worktree+branch (orphan cleanup, no registry needed)
+  janitor [--dry-run] [--max-age-hours N]                   — kill stale worker-* tmux sessions (default N=12h); skips 'working' status
+                                                               and orphan registry entries (registry file, no live tmux session)
 
 model: claude-sonnet-5 (default) | opus
 Worker names are globally unique (registry-tracked). Project path is required only for spawn;
@@ -273,6 +275,93 @@ _wait_has_live_bg_task() {
         done <<< "$out"
         echo "$found"
     ' _ "$SPAWN" "$project" "$name" 2>/dev/null || echo error
+}
+
+
+# --- janitor (stale-worker cleanup) ---
+# Same shared-file + fail-open pattern as _wait_trace (WORKER_LOGGER_DIR override,
+# every write guarded by `|| true` so a logging hiccup can never abort the sweep
+# under this file's `set -e`).
+_JANITOR_LOG_FILE="${WORKER_LOGGER_DIR:-$HOME/Documents/ai/Meta/blank/src/logs}/janitor.log"
+_JANITOR_ORPHAN_GRACE_SECS=30
+
+_janitor_log() {
+    mkdir -p "$(dirname "$_JANITOR_LOG_FILE")" 2>/dev/null || true
+    echo "$(date -Iseconds) $1" >> "$_JANITOR_LOG_FILE" 2>/dev/null || true
+}
+
+# _janitor_resolve_worker SESSION
+#   Resolves (name, project) for a raw worker-* tmux session name — the registry is
+#   keyed by name, not session, so this is the inverse of _worker_session_name.
+#   Order: registry (any entry whose recomputed session matches) -> pane_current_path
+#   (worktree-mode spawns cd into PROJECT/.claude/worktrees/NAME — same lookup
+#   _worker_detect_status already relies on; --no-worktree spawns cd into PROJECT
+#   directly, matched via exact "worker-<basename>-" prefix) -> tmux_scan_project
+#   fallback (existing helper, keyed off the session's trailing segment as a name
+#   guess). Every candidate is round-trip verified via _worker_session_name before
+#   being accepted — a wrong split/guess must never masquerade as resolved.
+#   Echoes "name|project" on success; silent + returns 1 on failure.
+_janitor_resolve_worker() {
+    local session="$1"
+    local f rname rproj rsession
+    for f in "$REGISTRY_DIR"/*; do
+        [ -f "$f" ] || continue
+        [[ "$f" == *.worktrees ]] && continue
+        rname=$(basename "$f")
+        rproj=$(cat "$f" 2>/dev/null) || continue
+        [ -z "$rproj" ] && continue
+        rsession=$(bash -c "source \"$SPAWN\" && _worker_session_name \"\$1\" \"\$2\"" _ "$rproj" "$rname" 2>/dev/null) || continue
+        if [ "$rsession" = "$session" ]; then
+            echo "${rname}|${rproj}"
+            return 0
+        fi
+    done
+
+    local pcp
+    pcp=$(tmux display-message -t "${session}:^" -p "#{pane_current_path}" 2>/dev/null) || pcp=""
+    if [ -n "$pcp" ]; then
+        local name="" proj=""
+        if [[ "$pcp" == */.claude/worktrees/* ]]; then
+            name=$(basename "$pcp")
+            proj="${pcp%%/.claude/worktrees/*}"
+        else
+            proj=$(resolve_project_path "$pcp")
+            local prefix="worker-$(basename "$proj")-"
+            [[ "$session" == "$prefix"* ]] && name="${session#$prefix}"
+        fi
+        if [ -n "$name" ] && [ -n "$proj" ]; then
+            rsession=$(bash -c "source \"$SPAWN\" && _worker_session_name \"\$1\" \"\$2\"" _ "$proj" "$name" 2>/dev/null) || rsession=""
+            if [ "$rsession" = "$session" ]; then
+                echo "${name}|${proj}"
+                return 0
+            fi
+        fi
+    fi
+
+    local guess="${session##*-}"
+    local resolved
+    resolved=$(tmux_scan_project "$guess" 2>/dev/null) || resolved=""
+    if [ -n "$resolved" ]; then
+        rsession=$(bash -c "source \"$SPAWN\" && _worker_session_name \"\$1\" \"\$2\"" _ "$resolved" "$guess" 2>/dev/null) || rsession=""
+        if [ "$rsession" = "$session" ]; then
+            echo "${guess}|${resolved}"
+            return 0
+        fi
+    fi
+    return 1
+}
+
+# _janitor_has_uncommitted PROJECT NAME
+#   yes/no/n-a (worktree dir absent) — logged before every real kill.
+_janitor_has_uncommitted() {
+    local project="$1" name="$2"
+    local wt="$project/.claude/worktrees/$name"
+    [ -d "$wt" ] || { echo "n/a"; return 0; }
+    if [ -n "$(git -C "$wt" status --porcelain 2>/dev/null)" ]; then
+        echo "yes"
+    else
+        echo "no"
+    fi
 }
 
 
@@ -643,6 +732,91 @@ case "$CMD" in
             && echo "  worktree removed" || echo "  worktree not found"
         git -C "$TARGET" branch -D "$BRANCH" 2>/dev/null \
             && echo "  branch '$BRANCH' deleted" || echo "  branch '$BRANCH' not found"
+        ;;
+    janitor)
+        DRY_RUN=0
+        MAX_AGE_HOURS=12
+        while [ $# -gt 0 ]; do
+            case "$1" in
+                --dry-run) DRY_RUN=1; shift ;;
+                --max-age-hours) MAX_AGE_HOURS="${2:?worker-cli janitor: --max-age-hours needs a value}"; shift 2 ;;
+                --max-age-hours=*) MAX_AGE_HOURS="${1#--max-age-hours=}"; shift ;;
+                *) echo "worker-cli janitor: unknown arg '$1'" >&2; exit 2 ;;
+            esac
+        done
+        THRESHOLD_SECS=$((MAX_AGE_HOURS * 3600))
+        NOW_TS=$(date +%s)
+        _janitor_log "event=start dry_run=$DRY_RUN max_age_hours=$MAX_AGE_HOURS"
+
+        # Pass 1: age-gated sweep over live worker-* tmux sessions.
+        SESSIONS=$(tmux list-sessions -F "#{session_name} #{session_created}" 2>/dev/null | grep "^worker-" || true)
+        if [ -n "$SESSIONS" ]; then
+            while IFS=' ' read -r SESS CREATED; do
+                [ -z "$SESS" ] && continue
+                AGE=$((NOW_TS - CREATED))
+                [ "$AGE" -lt "$THRESHOLD_SECS" ] && continue
+
+                STATUS=$(bash -c "source \"$SPAWN\" && _worker_detect_status \"\$1\"" _ "$SESS" 2>/dev/null || echo "unknown")
+                if [ "$STATUS" = "working" ]; then
+                    echo "SKIP (working): $SESS  age=${AGE}s"
+                    _janitor_log "action=skip-working session=$SESS age_s=$AGE"
+                    continue
+                fi
+
+                RESOLVED=$(_janitor_resolve_worker "$SESS") || RESOLVED=""
+                if [ -z "$RESOLVED" ]; then
+                    echo "SKIP (unresolvable project): $SESS  age=${AGE}s  status=$STATUS"
+                    _janitor_log "action=skip-unresolvable session=$SESS age_s=$AGE status=${STATUS// /_}"
+                    continue
+                fi
+                RNAME="${RESOLVED%%|*}"
+                RPROJ="${RESOLVED#*|}"
+                DIRTY=$(_janitor_has_uncommitted "$RPROJ" "$RNAME")
+
+                if [ "$DRY_RUN" = "1" ]; then
+                    echo "DRY-RUN candidate: $SESS  name=$RNAME project=$RPROJ age=${AGE}s status=$STATUS uncommitted=$DIRTY"
+                    _janitor_log "action=dry-run-candidate session=$SESS name=$RNAME project=$RPROJ age_s=$AGE status=${STATUS// /_} uncommitted=$DIRTY"
+                else
+                    echo "KILL: $SESS  name=$RNAME project=$RPROJ age=${AGE}s status=$STATUS uncommitted=$DIRTY"
+                    _janitor_log "action=kill session=$SESS name=$RNAME project=$RPROJ age_s=$AGE status=${STATUS// /_} uncommitted=$DIRTY"
+                    "$0" kill "$RNAME" "$RPROJ" 2>&1 | sed 's/^/  /'
+                fi
+            done <<< "$SESSIONS"
+        fi
+
+        # Pass 2: orphan registry entries — registry file whose tmux session no longer
+        # exists. Grace window on file mtime absorbs the spawn race (registry written
+        # moments before the tmux session appears).
+        if [ -d "$REGISTRY_DIR" ]; then
+            for _f in "$REGISTRY_DIR"/*; do
+                [ -f "$_f" ] || continue
+                [[ "$_f" == *.worktrees ]] && continue
+                _oname=$(basename "$_f")
+                _oproj=$(cat "$_f" 2>/dev/null) || continue
+                [ -z "$_oproj" ] && continue
+                _osession=$(bash -c "source \"$SPAWN\" && _worker_session_name \"\$1\" \"\$2\"" _ "$_oproj" "$_oname" 2>/dev/null) || continue
+                tmux has-session -t "$_osession" 2>/dev/null && continue
+
+                _mtime=$(stat -f %m "$_f" 2>/dev/null || stat -c %Y "$_f" 2>/dev/null || echo 0)
+                _fage=$((NOW_TS - _mtime))
+                if [ "$_fage" -lt "$_JANITOR_ORPHAN_GRACE_SECS" ]; then
+                    echo "SKIP (spawn-race grace): $_oname  registry_age=${_fage}s"
+                    _janitor_log "action=skip-spawn-race name=$_oname project=$_oproj registry_age_s=$_fage"
+                    continue
+                fi
+
+                _dirty=$(_janitor_has_uncommitted "$_oproj" "$_oname")
+                if [ "$DRY_RUN" = "1" ]; then
+                    echo "DRY-RUN orphan-registry candidate: $_oname  project=$_oproj uncommitted=$_dirty"
+                    _janitor_log "action=dry-run-orphan name=$_oname project=$_oproj uncommitted=$_dirty"
+                else
+                    echo "ORPHAN-CLEAN: $_oname  project=$_oproj uncommitted=$_dirty"
+                    _janitor_log "action=orphan-clean name=$_oname project=$_oproj uncommitted=$_dirty"
+                    "$0" kill "$_oname" "$_oproj" 2>&1 | sed 's/^/  /'
+                fi
+            done
+        fi
+        _janitor_log "event=end"
         ;;
     -h|--help|help)
         usage
