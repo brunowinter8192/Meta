@@ -75,7 +75,14 @@ Validate the redesign in `dev/` before touching `src/`: build it as a `dev/` pro
 
 ## Phase 2 — Module Standards Conformance
 
-The worker coding standard (`shared-rules/worker/code-standards`) defines how a single module is written. Opus does NOT get it in context — READ it each run (it changes), extract the concrete standards, and check every module against them. A module that deviates from a standard → dispatch a worker to bring it into conformance.
+The worker coding standard (`shared-rules/worker/code-standards`) defines how a single module is written. Opus does NOT get it in context — READ it each run, extract the concrete standards, and check every module against them. A module that deviates from a standard → dispatch a worker to bring it into conformance.
+
+**Comments.**
+Only the three comment types code-standards allows survive (section markers, one-line function headers, cross-module import comments). Every other comment is a violation — triage its content before deleting:
+
+- Substance recorded nowhere else (derivation, measurement, trade-off, source citation) → write it into a NEW dated `process-docs/<area>/` entry of the area the value belongs to.
+- A guard on a calibrated value ("do not change without evidence") → one line in the module's `DOCS.md` Gotchas.
+- Content already covered by process-docs or `DOCS.md` → delete outright.
 
 ## Phase 3 — Doc-Drift Check
 
