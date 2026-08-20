@@ -103,12 +103,8 @@ Check § docs (Placement). Beyond the rule: **Root files** — `README.md` → f
 
 Check § docs (DOCS.md Format). Beyond the rule: **References resolve** — every file a `DOCS.md` names exists on disk; a reference to a nonexistent file → delete it from the `DOCS.md`.
 
-**Cut triage.**
-Content removed to reach the format is never blind-deleted — triage each cut before making it:
-
-- Substance recorded nowhere else (not derivable from the code, absent from every process-docs area) → write it into ONE new dated salvage entry `process-docs/<area>/<date>_docs_format_salvage.md` per affected area BEFORE cutting. This is new authorship at decision time, not a layer port.
-- A value-guard/landmine → stays as a dense Gotchas line in the same `DOCS.md`.
-- Covered by code or a process-docs area → cut outright.
+**Cut salvage.**
+Everything removed to reach the format is written into ONE new dated salvage entry `process-docs/<area>/<date>_docs_format_salvage.md` per affected area BEFORE cutting — no coverage check, no per-cut triage; RAG makes the salvaged content findable. New authorship at decision time, not a layer port.
 
 #### Stage 3 — language
 
