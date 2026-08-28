@@ -6,6 +6,7 @@ Usage: python3 -m src.spawn.spawn <name> <prompt_file> <project_path> [model] [-
 # INFRASTRUCTURE
 
 import argparse
+import json
 import os
 import shutil
 import subprocess
@@ -13,6 +14,9 @@ import sys
 
 PLUGIN_DIR = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 TMUX_SPAWN_SH = os.path.join(PLUGIN_DIR, "src", "spawn", "tmux_spawn.sh")
+_DEFAULT_WORKER_MODEL = "claude-sonnet-5"
+_MODEL_SELECTION_FILE = os.environ.get(
+    "MODEL_SELECTION_FILE", os.path.expanduser("~/.claude/shared-rules/model_selection.json"))
 
 
 # ORCHESTRATOR
@@ -106,12 +110,29 @@ def _run_git(args: list, cwd: str) -> str:
     return result.stdout.strip()
 
 
+# Resolve the worker model when no explicit CLI argument was given: "worker" key from
+# ~/.claude/shared-rules/model_selection.json (menubar Models tab), else the hardcoded
+# fallback. Never raises — a missing/unreadable/malformed file or a missing/empty key all
+# degrade silently to the fallback; a spawn must never fail because of this file.
+def _resolve_worker_model() -> str:
+    worker = ""
+    try:
+        with open(_MODEL_SELECTION_FILE, encoding="utf-8") as f:
+            data = json.load(f)
+        worker = data.get("worker") or ""
+    except Exception:
+        worker = ""
+    return worker or _DEFAULT_WORKER_MODEL
+
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Spawn a Claude Code worker in a git worktree")
     parser.add_argument("name", help="Worker name (branch + tmux session suffix)")
     parser.add_argument("prompt_file", help="Absolute path to prompt file")
     parser.add_argument("project_path", help="Absolute path to project directory")
-    parser.add_argument("model", nargs="?", default="claude-sonnet-5")
+    parser.add_argument("model", nargs="?", default=None,
+                         help="Model ID; explicit argument wins over the config file")
     parser.add_argument("--no-worktree", action="store_true", help="Skip worktree creation, spawn in project dir directly")
     args = parser.parse_args()
-    spawn_workflow(args.name, args.prompt_file, args.project_path, args.model, not args.no_worktree)
+    resolved_model = args.model or _resolve_worker_model()
+    spawn_workflow(args.name, args.prompt_file, args.project_path, resolved_model, not args.no_worktree)
