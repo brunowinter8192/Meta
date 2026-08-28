@@ -501,6 +501,32 @@ _worker_proxy_setup() {
 }
 
 
+# _resolve_worker_model
+#   Returns the worker model to use when no explicit model argument was given: the "worker"
+#   key from ~/.claude/shared-rules/model_selection.json (menubar Models tab, 2026-08 model-
+#   selector milestone 3) if present and non-empty, else the hardcoded fallback "claude-sonnet-5".
+#   Never fails under set -e — jq's own failure is caught with the same `|| true` idiom already
+#   used for the hooks.json read above; a missing/unreadable/malformed file, missing jq, or a
+#   missing/empty "worker" key all degrade silently to the hardcoded fallback.
+#   NOTE: for `worker-cli spawn`, spawn.py resolves the model in Python BEFORE ever calling into
+#   this file, so this function is not exercised on that path — it's load-bearing for (a) a
+#   direct caller of spawn_claude_worker/spawn_claude_worker_from_file that omits the model
+#   argument, and (b) worker_revive's own fallback when WORKER_MODEL is absent from the tmux
+#   environment (see worker_revive below — the stored WORKER_MODEL always wins over this).
+_resolve_worker_model() {
+    local file="${MODEL_SELECTION_FILE:-$HOME/.claude/shared-rules/model_selection.json}"
+    local worker=""
+    if command -v jq >/dev/null 2>&1 && [ -f "$file" ]; then
+        worker=$(jq -r '.worker // empty' "$file" 2>/dev/null || true)
+    fi
+    if [ -n "$worker" ]; then
+        echo "$worker"
+    else
+        echo "claude-sonnet-5"
+    fi
+}
+
+
 # spawn_claude_worker SESSION_IGNORED NAME PROJECT_PATH MODEL TASK_PROMPT [EXTRA_FLAGS]
 #   Spawns Claude Code in its own tmux session ("worker-<project>-<name>").
 #   Opens a Ghostty window to view the session.
@@ -515,7 +541,7 @@ spawn_claude_worker() {
     local _session_ignored="${1:-}"
     local name="$2"
     local project_path="$3"
-    local model="${4:-claude-sonnet-5}"
+    local model="${4:-$(_resolve_worker_model)}"
     local task_prompt="$5"
     local extra_flags="${6:---dangerously-skip-permissions}"
 
@@ -625,7 +651,7 @@ spawn_claude_worker_from_file() {
     local session="${1:-}"
     local name="$2"
     local project_path="$3"
-    local model="${4:-claude-sonnet-5}"
+    local model="${4:-$(_resolve_worker_model)}"
     local prompt_file="$5"
     local extra_flags="${6:---dangerously-skip-permissions}"
 
@@ -709,10 +735,13 @@ worker_revive() {
     local session_id
     session_id=$(basename "$jsonl" .jsonl)
 
-    # Restore stored env vars from the dead session BEFORE killing it
+    # Restore stored env vars from the dead session BEFORE killing it.
+    # The stored WORKER_MODEL always wins when present — revive's job is to restore the model
+    # the worker was ORIGINALLY spawned with, not to re-apply a possibly-since-changed config.
+    # The config (then the hardcoded fallback) only applies when WORKER_MODEL itself is absent.
     local model purpose parent
     model=$(tmux show-environment -t "$session" WORKER_MODEL 2>/dev/null | cut -d= -f2-)
-    [ -z "$model" ] && model="claude-sonnet-5"
+    [ -z "$model" ] && model="$(_resolve_worker_model)"
     purpose=$(tmux show-environment -t "$session" WORKER_PURPOSE 2>/dev/null | cut -d= -f2-)
     [ -z "$purpose" ] && purpose="(?)"
     parent=$(tmux show-environment -t "$session" WORKER_PARENT 2>/dev/null | cut -d= -f2-)

@@ -29,7 +29,7 @@ usage: worker-cli <cmd> [args]
   janitor [--dry-run] [--max-age-hours N]                   — kill stale worker-* tmux sessions (default N=12h); skips 'working' status
                                                                and orphan registry entries (registry file, no live tmux session)
 
-model: claude-sonnet-5 (default) | opus
+model: explicit [model] arg > "worker" key in ~/.claude/shared-rules/model_selection.json > claude-sonnet-5 (hardcoded fallback)
 Worker names are globally unique (registry-tracked). Project path is required only for spawn;
 other commands auto-resolve via the registry.
 Project path: absolute, ~/, or 'c' (resolves to current git project root, worktree-aware).
@@ -678,7 +678,12 @@ case "$CMD" in
         else
             PROJECT="$REQUESTED"
         fi
-        MODEL="${4:-claude-sonnet-5}"
+        # 2026-08 (model-selector milestone 3 fix): do NOT pre-resolve a hardcoded default here —
+        # that shadowed spawn.py's own config-file resolution (args.model was never actually
+        # None on this path, since a concrete literal always arrived as the 4th positional).
+        # Pass through empty when no model arg was given; spawn.py's `args.model or
+        # _resolve_worker_model()` treats an empty string as falsy and resolves it correctly.
+        MODEL="${4:-}"
         WORKTREE_FLAG=""
         [ "${5:-}" = "--no-worktree" ] && WORKTREE_FLAG="--no-worktree"
         cd "$PLUGIN" && python3 -m src.spawn.spawn "$NAME" "$PROMPT_FILE" "$PROJECT" "$MODEL" $WORKTREE_FLAG
