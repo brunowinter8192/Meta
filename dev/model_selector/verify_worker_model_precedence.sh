@@ -5,8 +5,17 @@
 # _resolve_worker_model(). Drives the REAL sourced function and the REAL "${4:-...}" expansion
 # pattern each site uses — no reimplementation of the resolution logic.
 #
+# 2026-08 milestone-3 fix follow-up: the isolated checks above passed even while the ASSEMBLED
+# path (bin/worker-cli spawn -> spawn.py -> tmux_spawn.sh) was dead code, because a 5th hardcode
+# site in bin/worker-cli itself pre-resolved the "no model" case before spawn.py ever ran. That
+# site is now fixed (MODEL="${4:-}"); the REAL-entry-point section below drives the actual
+# bin/worker-cli binary via subprocess — the only kind of check that would have caught this bug.
+#
 # Never touches the real ~/.claude/shared-rules/model_selection.json — all cases use a temp
-# path via the MODEL_SELECTION_FILE env override.
+# path via the MODEL_SELECTION_FILE env override. The real-entry-point section also overrides
+# WORKER_REGISTRY_DIR and CLAUDE_BIN so it never touches the real worker registry or spawns a
+# real Claude process, and unsets PROXY_PROJECT_PATH so the scratch project path is never
+# redirected by an ambient proxied session.
 #
 # Usage: bash dev/model_selector/verify_worker_model_precedence.sh
 
@@ -98,6 +107,78 @@ _assert_eq "WORKER_MODEL absent from tmux env -> config applies" \
 MODEL_SELECTION_FILE="$TMP_DIR/does_not_exist.json"
 _assert_eq "WORKER_MODEL absent AND config absent -> hardcoded fallback" \
     "claude-sonnet-5" "$(_revive_expand "")"
+
+echo
+echo "=== REAL entry point: bin/worker-cli spawn <name> <prompt> <path> (no model arg) ==="
+echo "    Drives the actual user-facing binary via subprocess — this is the assembled path that"
+echo "    the isolated checks above would NOT have caught the bin/worker-cli:681 bug on."
+
+WORKER_CLI="$PLUGIN_ROOT/bin/worker-cli"
+E2E_REGISTRY="$TMP_DIR/registry"
+mkdir -p "$E2E_REGISTRY"
+
+_run_e2e_spawn() {
+    # $1=worker name  $2=model arg ("" for none)  $3=config path  $4=expected model
+    local e2e_name="$1" model_arg="$2" config_path="$3" expected="$4"
+
+    local e2e_project="$TMP_DIR/e2e_project_${e2e_name}"
+    mkdir -p "$e2e_project"
+    local e2e_prompt="$TMP_DIR/e2e_prompt_${e2e_name}.txt"
+    echo "# e2e test prompt" > "$e2e_prompt"
+
+    local mock_claude="$TMP_DIR/mock_claude_${e2e_name}.sh"
+    cat > "$mock_claude" << 'MOCKEOF'
+#!/bin/bash
+echo "❯"
+sleep 8
+MOCKEOF
+    chmod +x "$mock_claude"
+
+    local session
+    session="worker-$(basename "$e2e_project")-${e2e_name}"
+    tmux kill-session -t "$session" 2>/dev/null || true
+    rm -f /tmp/.worker_"${e2e_name}".* 2>/dev/null
+
+    ( unset PROXY_PROJECT_PATH
+      export MODEL_SELECTION_FILE="$config_path"
+      export CLAUDE_BIN="$mock_claude"
+      export WORKER_REGISTRY_DIR="$E2E_REGISTRY"
+      # bin/worker-cli resolves its own $PLUGIN from CLAUDE_PLUGIN_ROOT, falling back to the
+      # INSTALLED plugin cache copy if unset — NOT this worktree. Without this override the
+      # real call silently exercises the stale installed spawn.py instead of the code under
+      # test (confirmed live: the installed cache copy still has the old hardcoded default —
+      # this is exactly the kind of gap an isolated `source tmux_spawn.sh` test cannot catch).
+      export CLAUDE_PLUGIN_ROOT="$PLUGIN_ROOT"
+      "$WORKER_CLI" spawn "$e2e_name" "$e2e_prompt" "$e2e_project" "$model_arg" --no-worktree \
+          > "$TMP_DIR/e2e_output_${e2e_name}.log" 2>&1
+    )
+
+    sleep 1  # let the runner script materialize and the tmux env settle
+
+    local runner_file runner_model
+    runner_file=$(ls /tmp/.worker_"${e2e_name}".* 2>/dev/null | head -1)
+    if [ -n "$runner_file" ] && [ -f "$runner_file" ]; then
+        runner_model=$(grep -o "\-\-model '[^']*'" "$runner_file" | head -1 | sed "s/--model '//;s/'\$//")
+    else
+        runner_model="<runner file not found — see $TMP_DIR/e2e_output_${e2e_name}.log>"
+    fi
+    _assert_eq "real worker-cli spawn (model_arg='$model_arg') -> runner script's --model" \
+        "$expected" "$runner_model"
+
+    local env_model
+    env_model=$(tmux show-environment -t "$session" WORKER_MODEL 2>/dev/null | cut -d= -f2-)
+    _assert_eq "real worker-cli spawn (model_arg='$model_arg') -> tmux WORKER_MODEL env" \
+        "$expected" "$env_model"
+
+    tmux kill-session -t "$session" 2>/dev/null || true
+    rm -f "$runner_file" "/tmp/worker-${e2e_name}.done" 2>/dev/null
+}
+
+E2E_CONFIG="$TMP_DIR/e2e_config.json"
+echo '{"main": "claude-opus-5", "worker": "claude-e2e-verify-9999"}' > "$E2E_CONFIG"
+
+_run_e2e_spawn "mstestnomodel$$" "" "$E2E_CONFIG" "claude-e2e-verify-9999"
+_run_e2e_spawn "mstestexplicit$$" "claude-e2e-explicit-arg" "$E2E_CONFIG" "claude-e2e-explicit-arg"
 
 echo
 echo "=== structural check: all 3 tmux_spawn.sh call sites reference _resolve_worker_model ==="

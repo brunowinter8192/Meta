@@ -1,4 +1,4 @@
-# spawn.py model-resolution verification — 2026-08-28T20:35:35
+# spawn.py model-resolution verification — 2026-08-28T20:48:38
 
 Missing config file -> 'claude-sonnet-5' (expected hardcoded fallback)
 Valid config -> 'claude-fable-5' (expected config's worker model)
