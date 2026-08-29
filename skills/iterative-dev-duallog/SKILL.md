@@ -25,11 +25,11 @@ What each turn classifier means — the basis for deciding what to expand:
 | Classifier | What it is |
 |---|---|
 | user / text | A genuine human message — the steering signal. Expand these to follow intent, criticism, and decisions |
-| assistant / text | The agent's visible reply. A ~9-char one is the literal placeholder `undefined` — the turn's real content was thinking or tool calls |
-| assistant / thinking | Internal reasoning. `0 chars` plus signature means the text was withheld; large ones carry the agent's actual deliberation |
+| assistant / text | The agent's visible reply |
+| assistant / thinking | Internal reasoning preceding a reply or tool call |
 | assistant / tool_use | A tool invocation: tool name plus input JSON — the executed command lives here |
 | user / tool_result | The tool's output, returned under the user role; `tool_result!err` marks errors |
-| system / system | Runtime injections: 49-char ones are `total_tokens` counters (noise), large ones are deferred-tool or agent lists |
+| system / system | Runtime-injected blocks, e.g. token counters or deferred-tool lists |
 | user / system-reminder | CC-injected context wrapped as a user turn (CLAUDE.md contents, env context) |
 | user / task-notification | Background-task wake-up (task id, output path, status) — automated, never real user input |
 
