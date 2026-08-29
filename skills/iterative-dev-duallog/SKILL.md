@@ -18,6 +18,5 @@ Invocation: `duallog <command>` (in PATH; runs the monitor-cc main checkout).
 
 ## Search Strategy
 
-1. `sessions` for the inventory — every session newest-first with start time, context (`opus/<project>` or `worker/<project>/<name>`), stem. One project term catches main AND worker sessions: "everything websearch from 2026-08-28" → `sessions websearch --since 2026-08-28 --until 2026-08-28`.
-2. `timeline <session>` for the shape — turns, request markers, block sizes, previews. `<session>` is the full stem or any unambiguous substring (`gh_cli_1787995963` works); an ambiguous one errors with the candidate list.
-3. `search <session> <term>` to locate content, then `timeline <session> --turn N --full` to read a hit's complete turn.
+1. Scope with `sessions` — narrow by project term and day: "everything websearch from 2026-08-28" → `sessions websearch --since 2026-08-28 --until 2026-08-28`. One project term catches main AND worker sessions.
+2. `search <session> <term>` across the few candidates to locate content, then `timeline <session> --turn N --full` to read a hit's complete turn. `<session>` is the full stem or any unambiguous substring; an ambiguous one errors with the candidate list.
