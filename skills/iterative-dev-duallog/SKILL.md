@@ -12,12 +12,12 @@ Invocation: `duallog <command>` (in PATH; runs the monitor-cc main checkout).
 
 | Command | Args | Does |
 |---|---|---|
-| sessions | [--since YYYY-MM-DD] [--until YYYY-MM-DD] | List sessions (start, context, stem), newest first; both day flags inclusive, filtering on session start |
+| sessions | [context] [--since YYYY-MM-DD] [--until YYYY-MM-DD] | List sessions (start, context, stem), newest first; `context` is a case-insensitive substring filter (`websearch`, `worker/`, `opus/`); day flags inclusive, on session start; all filters AND |
 | timeline | session [--turn N] [--full] | Deduplicated turn timeline of one session; `--turn` restricts to one turn, `--full` prints that turn's complete block contents |
 | search | session term [--case-sensitive] | Find a term in one session's deduplicated timeline — searches full block content including tool_use JSON inputs; one hit per (turn, block) with `×N` occurrence count; case-insensitive by default |
 
 ## Search Strategy
 
-1. `sessions` for the inventory — every session newest-first with start time, context (`opus/<project>` or `worker/<name>`), stem. Narrow by day when the request names one: "the gh_cli session from 2026-08-29" → `sessions --since 2026-08-29 --until 2026-08-29`, then pick the matching context.
+1. `sessions` for the inventory — every session newest-first with start time, context (`opus/<project>` or `worker/<name>`), stem. Narrow by what the request names: "the websearch session from 2026-08-28" → `sessions websearch --since 2026-08-28 --until 2026-08-28`.
 2. `timeline <session>` for the shape — turns, request markers, block sizes, previews. `<session>` is the full stem or any unambiguous substring (`gh_cli_1787995963` works); an ambiguous one errors with the candidate list.
 3. `search <session> <term>` to locate content, then `timeline <session> --turn N --full` to read a hit's complete turn.
