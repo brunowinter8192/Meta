@@ -6,7 +6,7 @@ description:
 # Dual-Log Reading — Skill
 
 **The dual_log is the byte-level record of every CC session — read it ONLY through the CLI.**
-Invocation: `duallog <command>` (in PATH; runs the monitor-cc main checkout). Never grep, cat, or Read the JSONL files directly: one `_original` line is a COMPLETE API request (up to 15 MB) that re-embeds the entire conversation history — a grep hit appears once per subsequent request, and a Read blows the context window.
+Invocation: `duallog <command>` (in PATH; runs the monitor-cc main checkout).
 
 **`sessions` first, then `timeline` or `search`.**
 `sessions` lists every session newest-first: start time, context (`opus/<project>` or `worker/<name>`), stem, request count, message count, size on disk. `timeline <session>` takes the full stem or any unambiguous substring (`gh_cli_1787995963` works); an ambiguous substring errors with the candidate list.
