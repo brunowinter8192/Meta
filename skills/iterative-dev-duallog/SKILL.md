@@ -12,12 +12,12 @@ Invocation: `duallog <command>` (in PATH; runs the monitor-cc main checkout).
 
 | Command | Args | Does |
 |---|---|---|
-| sessions | — | List all sessions with start, context, stem, requests, messages, size — newest first |
+| sessions | [--since YYYY-MM-DD] [--until YYYY-MM-DD] | List sessions (start, context, stem), newest first; both day flags inclusive, filtering on session start |
 | timeline | session [--turn N] [--full] | Deduplicated turn timeline of one session; `--turn` restricts to one turn, `--full` prints that turn's complete block contents |
 | search | session term [--case-sensitive] | Find a term in one session's deduplicated timeline — searches full block content including tool_use JSON inputs; one hit per (turn, block) with `×N` occurrence count; case-insensitive by default |
 
 ## Search Strategy
 
-1. `sessions` for the inventory — every session newest-first with start time, context (`opus/<project>` or `worker/<name>`), stem, request count, message count, size. Pick the target here.
+1. `sessions` for the inventory — every session newest-first with start time, context (`opus/<project>` or `worker/<name>`), stem. Narrow by day when the request names one: "the gh_cli session from 2026-08-29" → `sessions --since 2026-08-29 --until 2026-08-29`, then pick the matching context.
 2. `timeline <session>` for the shape — turns, request markers, block sizes, previews. `<session>` is the full stem or any unambiguous substring (`gh_cli_1787995963` works); an ambiguous one errors with the candidate list.
 3. `search <session> <term>` to locate content, then `timeline <session> --turn N --full` to read a hit's complete turn.
