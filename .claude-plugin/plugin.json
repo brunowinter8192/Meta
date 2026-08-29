@@ -13,6 +13,7 @@
   ],
   "skills": [
     "./skills/iterative-dev-refactor/",
-    "./skills/iterative-dev-doccheck/"
+    "./skills/iterative-dev-doccheck/",
+    "./skills/iterative-dev-duallog/"
   ]
 }
