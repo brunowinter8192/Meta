@@ -12,10 +12,9 @@ Invocation: `duallog <command>` (in PATH; runs the monitor-cc main checkout).
 
 | Command | Args | Does |
 |---|---|---|
-| sessions | [context] [--since YYYY-MM-DD] [--until YYYY-MM-DD] | List sessions (start, context, stem), newest first; `context` is a case-insensitive substring filter (`websearch`, `worker/`, `opus/`); day flags inclusive, on session start; all filters AND |
-| timeline | session | Deduplicated msg timeline of one session |
-| expand | session msg [--before N] [--after N] [--only classifier] | Classifier rows (msg index, time, role, type-or-block-count, chars) around an anchor msg; a multi-block msg lists its blocks as indented sub-rows; before/after default 30 with a HARD FLOOR of 30 — only larger allowed; `--only` narrows what is printed, never the examined window |
-| expand --full | session msg --full --before N --after N [--only classifier] | Full content of the window; both bounds required, no floor (0 works) |
+| sessions | [context] [--since YYYY-MM-DD] [--until YYYY-MM-DD] | List sessions (start, context, stem), newest first; `context` is a case-insensitive substring filter (`websearch`, `worker/`, `opus/`); day flags inclusive, on session start; all filters AND — this and nothing else |
+| msgs | session [from] [to] | Request-grouped msg listing: one `── REQ n  HH:MM:SS ──` separator per request, below it one `[N] role type chars` line per msg that request added (multi-block msgs as `N blocks`); optional inclusive index range keeps a partial group's separator; REQ numbers match the proxy pane's `#N`; nothing else |
+| expand | session msg [--before N] [--after N] [--only classifier] | Full content of the window around an anchor msg; before/after default 0, so a bare call prints exactly the anchor msg; `--only` narrows what is printed, never the examined window. A block the proxy transformed is followed by `── stripped by REQ n ──` / `── injected by REQ n ──` sections (REQ n = the request that PERFORMED the strip, matching `msgs`' numbering); an untouched block shows content only |
 | search | term [scope] [--since YYYY-MM-DD] [--until YYYY-MM-DD] [--only classifier] [--case-sensitive] | Find a term across the deduplicated timelines — `scope` matches context OR stem (project, worker, or single session); every filter optional and AND-combined; searches full block content including tool_use JSON inputs; one hit per (turn, block) with `×N` count; case-insensitive by default |
 
 `--only` takes a role (`user`), a block type (`tool_result`), or a role/type pair (`user/text`) — a msg is selected when its role matches and ANY of its blocks matches the type, and a selected msg always shows ALL its blocks. The pair `user/text` isolates what the human actually typed.
@@ -39,6 +38,6 @@ The story of a session lives in user/text, assistant/text and thinking; the mech
 
 ## Search Strategy
 
-1. Scope and search in ONE command — project, day, and session are independent optional axes: "where was the Reißleine story, websearch, yesterday" → `search "Reißleine" websearch --since 2026-08-28 --until 2026-08-28`. Day-only, project-only, single-session, or fully unscoped all work.
+1. Scope and search in ONE command — project, day, and session are independent optional axes: "where was `<topic>` discussed, in `<project>`, on `<day>`" → `search "<term>" <project> --since <day> --until <day>`. Day-only, project-only, single-session, or fully unscoped all work.
 2. `sessions [context] [--since] [--until]` when you first need the inventory itself rather than content.
-3. Around a hit, `expand <session> <msg>` for the classifier overview, then `expand <session> <msg> --full --before N --after N [--only user/text]` to read the chain; `--full --before 0 --after 0` reads exactly one msg.
+3. Around a hit, `expand <session> <msg>` reads exactly that msg in full; widen with `--before N --after N [--only user/text]` to read the chain.
