@@ -167,10 +167,14 @@ _worker_detect_status() {
     # Context-limit marker check: the LAST assistant-type entry in the JSONL (not
     # necessarily the last line of the file) is the synthetic rejection Claude Code
     # writes when it blocks a turn for prompt length — the worker cannot take another
-    # message until the user runs /compact or /clear, so this counts as "dead".
+    # message until the user runs /compact or /clear, so this counts as "dead". Bounded
+    # to the last 200 lines (tail, not a full slurp) — a multi-megabyte session JSONL
+    # must stay cheap under `wait`'s 5s poll cadence; the marker, if present, is always
+    # the newest assistant entry, well within any realistic tail window.
     if [ -n "${jsonl:-}" ] && [ -f "$jsonl" ]; then
         local last_assistant
-        last_assistant=$(jq -c -s '[.[] | select(.type=="assistant")] | last // empty' "$jsonl" 2>/dev/null || true)
+        last_assistant=$(tail -n 200 "$jsonl" 2>/dev/null \
+            | jq -c -s '[.[] | select(.type=="assistant")] | last // empty' 2>/dev/null || true)
         if [ -n "$last_assistant" ] && [ "$last_assistant" != "null" ]; then
             local marker_model marker_is_err marker_err marker_text
             marker_model=$(echo "$last_assistant" | jq -r '.message.model // empty' 2>/dev/null || true)
