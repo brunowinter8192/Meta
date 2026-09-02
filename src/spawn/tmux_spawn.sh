@@ -577,7 +577,7 @@ spawn_claude_worker() {
     local project_path="$3"
     local model="${4:-$(_resolve_worker_model)}"
     local task_prompt="$5"
-    local extra_flags="${6:---dangerously-skip-permissions}"
+    local extra_flags="${6:---permission-mode acceptEdits}"
 
     local session
     session=$(_worker_session_name "$project_path" "$name")
@@ -687,7 +687,7 @@ spawn_claude_worker_from_file() {
     local project_path="$3"
     local model="${4:-$(_resolve_worker_model)}"
     local prompt_file="$5"
-    local extra_flags="${6:---dangerously-skip-permissions}"
+    local extra_flags="${6:---permission-mode acceptEdits}"
 
     if [ ! -f "$prompt_file" ]; then
         echo "ERROR: Prompt file not found: $prompt_file" >&2
@@ -811,7 +811,7 @@ _cleanup() {
 }
 trap _cleanup EXIT INT TERM HUP
 cd '${worktree}'
-${proxy_env_prefix}${worker_claude_bin} --model '${model}' --dangerously-skip-permissions --resume '${session_id}'
+${proxy_env_prefix}${worker_claude_bin} --model '${model}' --permission-mode acceptEdits --resume '${session_id}'
 RUNSCRIPT
     chmod +x "$runner"
 
