@@ -136,6 +136,28 @@ encode_worktree_path() {
     echo "$p"
 }
 
+# _status_or_probe_error NAME PROJECT_PATH
+#   Wraps a `worker_status` call for the display-only commands (list, status, status --all).
+#   worker_status itself already returns "dead" cleanly (exit 0) for a genuinely gone
+#   session — a FAILURE of this outer call means the probe itself broke (source error,
+#   bash spawn failure), not a worker state. Recover the best answer we can: genuinely
+#   gone session -> dead, anything else -> working (the safe default; a failed probe
+#   cannot prove any other state).
+_status_or_probe_error() {
+    local name="$1" project="$2"
+    local status
+    if status=$(bash -c "source \"$SPAWN\" && worker_status \"\$1\" \"\$2\"" _ "$name" "$project" 2>/dev/null); then
+        echo "$status"
+        return 0
+    fi
+    local session="worker-$(basename "$project")-$name"
+    if tmux has-session -t "$session" 2>/dev/null; then
+        echo "working"
+    else
+        echo "dead"
+    fi
+}
+
 # --- wait helpers ---
 # Poll cadence + stability window for `wait`. Two consecutive idle samples aren't enough to
 # rule out a sampling race at the exact hook-transition instant; three samples 5s apart give
@@ -358,8 +380,7 @@ case "$CMD" in
                     [[ "$_f" == *.worktrees ]] && continue
                     _wname=$(basename "$_f")
                     _proj=$(cat "$_f")
-                    _status=$(bash -c "source \"$SPAWN\" && worker_status \"\$1\" \"\$2\"" \
-                        _ "$_wname" "$_proj" 2>/dev/null || echo "unknown")
+                    _status=$(_status_or_probe_error "$_wname" "$_proj")
                     echo "${_wname}: ${_status}  (${_proj})"
                 done
             fi
@@ -380,8 +401,7 @@ case "$CMD" in
                     echo "(no active workers)"
                 else
                     while IFS= read -r wname; do
-                        STATUS=$(bash -c "source \"$SPAWN\" && worker_status \"\$1\" \"\$2\"" \
-                            _ "$wname" "$PROJECT" 2>/dev/null || echo "unknown")
+                        STATUS=$(_status_or_probe_error "$wname" "$PROJECT")
                         echo "${wname}: ${STATUS}"
                     done <<< "$NAMES"
                 fi
@@ -395,8 +415,7 @@ case "$CMD" in
                         [[ "$_f" == *.worktrees ]] && continue
                         _wname=$(basename "$_f")
                         _proj=$(cat "$_f")
-                        _status=$(bash -c "source \"$SPAWN\" && worker_status \"\$1\" \"\$2\"" \
-                            _ "$_wname" "$_proj" 2>/dev/null || echo "unknown")
+                        _status=$(_status_or_probe_error "$_wname" "$_proj")
                         echo "${_wname}: ${_status}"
                     done
                 fi
@@ -406,8 +425,7 @@ case "$CMD" in
             NAME="$1"
             OVERRIDE="${2:-}"
             PROJECT=$(resolve_worker_project "$NAME" "$OVERRIDE")
-            STATUS=$(bash -c "source \"$SPAWN\" && worker_status \"\$1\" \"\$2\"" \
-                _ "$NAME" "$PROJECT" 2>/dev/null || echo "unknown")
+            STATUS=$(_status_or_probe_error "$NAME" "$PROJECT")
             echo "${STATUS}"
         fi
         ;;
@@ -577,14 +595,14 @@ case "$CMD" in
             while IFS= read -r WNAME; do
                 [ -z "$WNAME" ] && continue
                 STATUS=$(bash -c "source \"$SPAWN\" && worker_status \"\$1\" \"\$2\"" \
-                    _ "$WNAME" "$PROJECT" 2>/dev/null || echo "unknown")
-                # Whitelist classification (2026-08-19 incident: verbatim "unknown" forever on a
-                # silently-dead worker held `wait` to the timeout ceiling). Only "idle" and the
-                # two verified-terminal strings ("limit reached", "unknown" — the closed
-                # vocabulary _worker_detect_status/worker_status actually return, see
-                # process-docs/worker_wait/) are non-blocking; "working" and any future/
-                # unrecognized status fall through to the default arm and stay blocking —
-                # fail-toward-waiting is preserved for anything not explicitly whitelisted here.
+                    _ "$WNAME" "$PROJECT" 2>/dev/null || echo "probe-error")
+                # Whitelist classification (2026-08-19 incident regression, now expressed over
+                # the closed three-value vocabulary _worker_detect_status/worker_status return
+                # — working/idle/dead, 2026-09-02, see process-docs/worker_wait/). Only "idle"
+                # and "dead" are non-blocking; "working", a failed probe ("probe-error", never
+                # a real worker state), and any future/unrecognized status fall through to the
+                # default arm and stay blocking — fail-toward-waiting is preserved for anything
+                # not explicitly whitelisted here, and none of them arm the transition gate.
                 case "$STATUS" in
                     working)
                         # Verbatim "working" is the ONLY status that arms the transition gate —
@@ -606,18 +624,18 @@ case "$CMD" in
                         fi
                         _wait_trace "$_WAIT_TRACE_TAG event=poll worker=$WNAME status=idle bg=no class=idle saw_working=$SAW_WORKING"
                         ;;
-                    "limit reached"|unknown)
+                    dead)
                         # Terminal: the coordinating claude process is presumed gone/stuck and
                         # will never transition back to working on its own — a dead worker needs
                         # orchestrator intervention, not more waiting. Bg-task probe deliberately
                         # SKIPPED here: its own tmux/jsonl lookups would very plausibly fail for a
-                        # genuinely dead/limited session too (-> "error" -> busy under its own
+                        # genuinely dead session too (-> "error" -> busy under its own
                         # fail-toward-waiting contract), which would silently re-trap `wait` in
                         # the exact "blocks forever on an unresolvable probe" failure this whole
                         # change fixes. An orphaned bg process surviving its dead coordinator
                         # doesn't change that the orchestrator must intervene either way.
                         ANY_TERMINAL=1
-                        _wait_trace "$_WAIT_TRACE_TAG event=poll worker=$WNAME status=${STATUS// /_} bg=- class=terminal saw_working=$SAW_WORKING"
+                        _wait_trace "$_WAIT_TRACE_TAG event=poll worker=$WNAME status=dead bg=- class=dead saw_working=$SAW_WORKING"
                         ;;
                     *)
                         _wait_trace "$_WAIT_TRACE_TAG event=poll worker=$WNAME status=${STATUS// /_} bg=- class=busy saw_working=$SAW_WORKING"
@@ -631,11 +649,11 @@ case "$CMD" in
             else
                 STABLE_COUNT=0
             fi
-            _wait_trace "$_WAIT_TRACE_TAG event=decision all_nonblocking=$ALL_NONBLOCKING any_terminal=$ANY_TERMINAL stable_count=$STABLE_COUNT elapsed=$ELAPSED"
+            _wait_trace "$_WAIT_TRACE_TAG event=decision all_nonblocking=$ALL_NONBLOCKING any_dead=$ANY_TERMINAL stable_count=$STABLE_COUNT elapsed=$ELAPSED"
             if [ "$STABLE_COUNT" -ge "$_WAIT_STABLE_SAMPLES" ] && [ "$SAW_WORKING" = "1" ]; then
                 if [ "$ANY_TERMINAL" = "1" ]; then
-                    _wait_trace "$_WAIT_TRACE_TAG event=exit reason=worker_terminal elapsed=$ELAPSED saw_working=$SAW_WORKING"
-                    echo "worker terminal"
+                    _wait_trace "$_WAIT_TRACE_TAG event=exit reason=worker_dead elapsed=$ELAPSED saw_working=$SAW_WORKING"
+                    echo "worker dead"
                     exit 0
                 fi
                 _wait_trace "$_WAIT_TRACE_TAG event=exit reason=workers_idle elapsed=$ELAPSED saw_working=$SAW_WORKING"
@@ -741,7 +759,12 @@ case "$CMD" in
                 AGE=$((NOW_TS - CREATED))
                 [ "$AGE" -lt "$THRESHOLD_SECS" ] && continue
 
-                STATUS=$(bash -c "source \"$SPAWN\" && _worker_detect_status \"\$1\"" _ "$SESS" 2>/dev/null || echo "unknown")
+                # A failed probe here means the check itself broke, not that the worker died —
+                # $SESS was just confirmed live via `tmux list-sessions` above, so fall back to
+                # a direct has-session recheck: genuinely gone -> dead, else -> working (same
+                # decision as the display commands' _status_or_probe_error).
+                STATUS=$(bash -c "source \"$SPAWN\" && _worker_detect_status \"\$1\"" _ "$SESS" 2>/dev/null) \
+                    || STATUS=$(tmux has-session -t "$SESS" 2>/dev/null && echo "working" || echo "dead")
                 if [ "$STATUS" = "working" ]; then
                     echo "SKIP (working): $SESS  age=${AGE}s"
                     _janitor_log "action=skip-working session=$SESS age_s=$AGE"
