@@ -50,17 +50,26 @@ set_hook_status() {
         && mv "$tmp" "$HOOKS_FILE"
 }
 
-# --- fake worker: real tmux session (claude-dummy child, optional persistent tooling grandchild) + hooks entry ---
-# create_worker NAME PROJ_DIR SESSION_ID STATUS BG(0|1)
+# --- fake worker: real tmux session (claude-dummy child, optional persistent tooling grandchild
+# or chatty print-loop) + hooks entry ---
+# create_worker NAME PROJ_DIR SESSION_ID STATUS BG(0|1) [CHATTY(0|1)]
 # BG=1: claude-dummy forks a persistent grandchild (simulates a long-lived tooling child — e.g.
 # pyright-langserver, the live incident this fixture regression-guards) that is NEVER killed
 # during a test using it — the handle-based bg-task check must ignore it entirely, unlike the
 # old process-tree walk this replaced (any grandchild = "busy", forever).
+# CHATTY=1 (mutually exclusive with BG=1): claude-dummy loops printing to the pane every 1-2s
+# until go_quiet() touches PROJ_DIR/.chatty-quiet, then falls silent (stays alive). This is the
+# ONLY way to keep #{window_activity} fresh past 10s — the signal _worker_detect_status demotes
+# hook_status=working on once stale (tmux_spawn.sh:172-186) — needed for any fixture that must
+# read back as genuinely "working" for longer than a few seconds, or after a status flip that
+# happens well after creation (the plain/BG=1 wrapper is silent, so window_activity goes stale
+# the moment ~10s pass with no further pane output, independent of what hooks.json says).
 create_worker() {
-    local name="$1" proj_dir="$2" session_id="$3" status="$4" bg="$5"
+    local name="$1" proj_dir="$2" session_id="$3" status="$4" bg="$5" chatty="${6:-0}"
     mkdir -p "$proj_dir"
     local session="worker-$(basename "$proj_dir")-$name"
     tmux kill-session -t "$session" 2>/dev/null || true
+    rm -f "$proj_dir/.claude.pid" "$proj_dir/.chatty-quiet"
     local wrap="$proj_dir/.wrap.sh"
     if [ "$bg" = "1" ]; then
         # claude-dummy stays alive as a real bash process (must NOT itself be exec'd away, or
@@ -71,6 +80,25 @@ create_worker() {
 #!/bin/bash
 ( exec -a claude-dummy bash -c '(exec -a pyright-langserver-dummy sleep 100000) & wait' ) &
 CLAUDE_PID=$!
+echo "$CLAUDE_PID" > "$(dirname "$0")/.claude.pid"
+wait $CLAUDE_PID
+INNER
+    elif [ "$chatty" = "1" ]; then
+        cat > "$proj_dir/.chatty.sh" <<'INNER'
+#!/bin/bash
+QUIET_FILE="$1"
+while [ ! -f "$QUIET_FILE" ]; do
+    echo "tick $(date +%s)"
+    sleep $(( (RANDOM % 2) + 1 ))
+done
+sleep 100000
+INNER
+        chmod +x "$proj_dir/.chatty.sh"
+        cat > "$wrap" <<'INNER'
+#!/bin/bash
+( exec -a claude-dummy bash "$(dirname "$0")/.chatty.sh" "$(dirname "$0")/.chatty-quiet" ) &
+CLAUDE_PID=$!
+echo "$CLAUDE_PID" > "$(dirname "$0")/.claude.pid"
 wait $CLAUDE_PID
 INNER
     else
@@ -78,6 +106,7 @@ INNER
 #!/bin/bash
 ( exec -a claude-dummy sleep 100000 ) &
 CLAUDE_PID=$!
+echo "$CLAUDE_PID" > "$(dirname "$0")/.claude.pid"
 wait $CLAUDE_PID
 INNER
     fi
@@ -99,6 +128,35 @@ INNER
     touch "$HOME/.claude/projects/$encoded/$session_id.jsonl"
     set_hook_status "$session_id" "$status" "$proj_dir"
     echo "$session"
+}
+
+# go_quiet PROJ_DIR — stops a CHATTY=1 worker's print loop (touches the control file
+# create_worker's chatty wrapper polls for). No-op if the worker wasn't created chatty.
+go_quiet() {
+    local proj_dir="$1"
+    touch "$proj_dir/.chatty-quiet"
+}
+
+# kill_claude_child PROJ_DIR — kills just the claude-dummy process (pid recorded by
+# create_worker), leaving the tmux session/pane alive. remain-on-exit then marks the pane
+# dead once the wrapper's own `wait $CLAUDE_PID` returns and the wrapper script itself exits
+# — _worker_detect_status reads that as pane_dead=1 -> "limit reached": the "claude child
+# gone" terminal path, distinct from killing the whole SESSION (which instead empties
+# worker_list's NAMES entirely and never classifies as terminal).
+kill_claude_child() {
+    local proj_dir="$1"
+    local pf="$proj_dir/.claude.pid"
+    [ -f "$pf" ] && kill "$(cat "$pf")" 2>/dev/null
+    return 0
+}
+
+# delete_hook_entry SESSION_ID — removes the hooks.json entry while the tmux session/process
+# stay alive, reproducing "unknown" (no hook data) without tearing down the worker itself —
+# used to edge a genuinely-working fixture into the stuck-unknown terminal shape mid-test.
+delete_hook_entry() {
+    local sid="$1"
+    jq --arg sid "$sid" 'del(.[$sid])' "$HOOKS_FILE" > "$HOOKS_FILE.tmp.$$" 2>/dev/null \
+        && mv "$HOOKS_FILE.tmp.$$" "$HOOKS_FILE"
 }
 
 # create_worker_no_hook NAME PROJ_DIR SESSION_ID
@@ -216,15 +274,18 @@ kill_fake_bg_task() {
 cleanup_all() {
     destroy_worker w1 "/tmp/${TEST_TAG}-1" "${TEST_TAG}-sess-1" 2>/dev/null || true
     destroy_worker w1 "/tmp/${TEST_TAG}-1b" "${TEST_TAG}-sess-1b" 2>/dev/null || true
-    destroy_worker w1 "/tmp/${TEST_TAG}-3a" "${TEST_TAG}-sess-3a" 2>/dev/null || true
+    destroy_worker w1 "/tmp/${TEST_TAG}-3" "${TEST_TAG}-sess-3" 2>/dev/null || true
+    destroy_worker w1 "/tmp/${TEST_TAG}-3b" "${TEST_TAG}-sess-3b" 2>/dev/null || true
     destroy_worker w1 "/tmp/${TEST_TAG}-4" "${TEST_TAG}-sess-4" 2>/dev/null || true
     destroy_worker w1 "/tmp/${TEST_TAG}-5" "${TEST_TAG}-sess-5" 2>/dev/null || true
     destroy_worker w1 "/tmp/${TEST_TAG}-6" "${TEST_TAG}-sess-6" 2>/dev/null || true
     destroy_worker w1 "/tmp/${TEST_TAG}-7" "${TEST_TAG}-sess-7" 2>/dev/null || true
     destroy_worker w1 "/tmp/${TEST_TAG}-8" "${TEST_TAG}-sess-8" 2>/dev/null || true
+    destroy_worker w1 "/tmp/${TEST_TAG}-8b" "${TEST_TAG}-sess-8b" 2>/dev/null || true
     destroy_worker wA "/tmp/${TEST_TAG}-9" "${TEST_TAG}-sess-9a" 2>/dev/null || true
     destroy_worker wB "/tmp/${TEST_TAG}-9" "${TEST_TAG}-sess-9b" 2>/dev/null || true
     destroy_worker w1 "/tmp/${TEST_TAG}-10" "${TEST_TAG}-sess-10" 2>/dev/null || true
+    destroy_worker w1 "/tmp/${TEST_TAG}-11" "${TEST_TAG}-sess-11" 2>/dev/null || true
     kill_fake_bg_task "${TEST_TAG}task5" 2>/dev/null || true
     kill_fake_bg_task "${TEST_TAG}task10" 2>/dev/null || true
     restore_hooks
@@ -234,103 +295,153 @@ trap cleanup_all EXIT
 backup_hooks
 
 echo "=== worker-cli wait — integration tests ==="
+echo "(2026-09-02 transition-gate change: 'wait' may only exit idle/terminal after observing a"
+echo " real 'working' poll in THIS invocation — see bin/worker-cli wait case + SAW_WORKING)"
 
-# --- Test 1: idle worker -> exits promptly, reason "workers idle" ---
+# --- Test 1 (transition-gate core proof, New Case 1): idle worker FROM THE START, never
+# observed "working" in this invocation -> must NOT exit "workers idle"; runs to timeout.
+# Was: "idle worker -> exits promptly, reason 'workers idle'" (the pre-gate, level-triggered
+# contract) — an idle-at-arm worker no longer looks like a finished transition. ---
 PROJ1="/tmp/${TEST_TAG}-1"
 SID1="${TEST_TAG}-sess-1"
 create_worker w1 "$PROJ1" "$SID1" idle 0 >/dev/null
 TRACE_SIZE_BEFORE1=$([ -f "$TRACE_FILE" ] && wc -c < "$TRACE_FILE" || echo 0)
 T0=$(date +%s)
-OUT1=$(bash "$BIN" wait "$PROJ1" --timeout 40)
+OUT1=$(bash "$BIN" wait "$PROJ1" --timeout 25)
 T1=$(date +%s)
 ELAPSED1=$((T1 - T0))
-if [ "$OUT1" = "workers idle" ] && [ "$ELAPSED1" -ge 9 ] && [ "$ELAPSED1" -le 25 ]; then
-    pass "test1 idle-worker: reason='$OUT1' elapsed=${ELAPSED1}s"
+if [ "$OUT1" = "timeout" ] && [ "$ELAPSED1" -ge 25 ] && [ "$ELAPSED1" -le 32 ]; then
+    pass "test1 idle-from-start-never-exits: reason='$OUT1' elapsed=${ELAPSED1}s"
 else
-    fail "test1 idle-worker: reason='$OUT1' elapsed=${ELAPSED1}s (expected 'workers idle', 9-25s)"
+    fail "test1 idle-from-start-never-exits: reason='$OUT1' elapsed=${ELAPSED1}s (expected 'timeout', ~25-32s)"
 fi
 
-# --- Test 1c (C1, 2026-08-18): trace file exists and records this run's start+exit ---
+# --- Test 1c (C1, 2026-08-18, adapted): trace shows the run started, never observed a
+# "working" poll (saw_working never reaches 1), and exited on the timeout ceiling. ---
 if [ -f "$TRACE_FILE" ]; then
     TRACE_NEW1=$(tail -c "+$((TRACE_SIZE_BEFORE1 + 1))" "$TRACE_FILE")
-    if [[ "$TRACE_NEW1" == *"event=start"* ]] && [[ "$TRACE_NEW1" == *"event=exit reason=workers_idle"* ]]; then
-        pass "test1c trace-observability: new trace lines contain event=start and event=exit"
+    if [[ "$TRACE_NEW1" == *"event=start"* ]] && [[ "$TRACE_NEW1" == *"event=exit reason=timeout"* ]] \
+        && [[ "$TRACE_NEW1" != *"saw_working=1"* ]]; then
+        pass "test1c trace-observability: event=start + event=exit reason=timeout, saw_working never 1"
     else
-        fail "test1c trace-observability: expected event=start + event=exit in new trace lines, got: $TRACE_NEW1"
+        fail "test1c trace-observability: got: $TRACE_NEW1"
     fi
 else
     fail "test1c trace-observability: $TRACE_FILE does not exist after a wait run"
 fi
 destroy_worker w1 "$PROJ1" "$SID1"
 
-# --- Test 1b (2026-08 incident regression): idle worker WITH a persistent tooling child (never
-# killed) -> must STILL exit promptly. Under the old process-tree walk this worker would never
-# have been detected as idle — every grandchild counted as "busy" forever, which is exactly the
-# live incident (pyright-langserver, 36+ min) this handle-based rewrite fixes. ---
+# --- Test 1b (2026-08 incident regression, adapted for the transition gate): worker starts
+# genuinely "working" WITH a persistent tooling grandchild (never killed) — observed working
+# at least once — then flips to idle -> exits "workers idle" promptly once stable. Preserves
+# BOTH the original grandchild-ignored-by-the-bg-probe regression AND proves the gate
+# correctly unlocks after a real working poll (window_activity is fresh at t=0, well inside
+# the 2s pre-flip window here, so no chatty loop is needed for this brief a working phase). ---
 PROJ1B="/tmp/${TEST_TAG}-1b"
 SID1B="${TEST_TAG}-sess-1b"
-create_worker w1 "$PROJ1B" "$SID1B" idle 1 >/dev/null
+create_worker w1 "$PROJ1B" "$SID1B" working 1 >/dev/null
+OUT1B_FILE="/tmp/${TEST_TAG}-1b.out"
+bash "$BIN" wait "$PROJ1B" --timeout 40 > "$OUT1B_FILE" 2>&1 &
+P1B=$!
+sleep 2
+set_hook_status "$SID1B" idle "$PROJ1B"
 T0=$(date +%s)
-OUT1B=$(bash "$BIN" wait "$PROJ1B" --timeout 40)
+wait "$P1B"; RC1B=$?
 T1=$(date +%s)
+OUT1B=$(cat "$OUT1B_FILE")
 ELAPSED1B=$((T1 - T0))
-if [ "$OUT1B" = "workers idle" ] && [ "$ELAPSED1B" -ge 9 ] && [ "$ELAPSED1B" -le 25 ]; then
-    pass "test1b tooling-child-incident: reason='$OUT1B' elapsed=${ELAPSED1B}s (persistent grandchild correctly ignored)"
+if [ "$OUT1B" = "workers idle" ] && [ "$RC1B" = 0 ] && [ "$ELAPSED1B" -le 25 ]; then
+    pass "test1b tooling-child-incident: reason='$OUT1B' ${ELAPSED1B}s after the idle edge (persistent grandchild correctly ignored)"
 else
-    fail "test1b tooling-child-incident: reason='$OUT1B' elapsed=${ELAPSED1B}s (expected 'workers idle', 9-25s — the incident regression)"
+    fail "test1b tooling-child-incident: rc=$RC1B reason='$OUT1B' elapsed=${ELAPSED1B}s (expected 'workers idle', <=25s after edge)"
 fi
+rm -f "$OUT1B_FILE"
 destroy_worker w1 "$PROJ1B" "$SID1B"
 
-# --- Test 2 (C3, 2026-08-18 contract change): no worker ever registered + timeout long enough
-# for the empty-NAMES grace window to win -> fast-exits "no workers" well before the ceiling.
-# Same 3-sample/5s-poll stability window already trusted for the idle transition (not a new
-# threshold) — was: "no worker + small timeout -> exits at timeout" (the pre-C3 contract, when
-# empty NAMES had no fast path at all and every zero-worker `wait` ran to the full ceiling). ---
+# --- Test 2 (transition-gate core proof, New Case 2): no worker EVER registered for this
+# project -> the removed "no workers" fast-exit must never fire; `wait` just keeps polling an
+# empty roster (a non-exiting state, same as idle-from-start above) until the timeout ceiling.
+# Was: "no worker ever registered + long timeout -> fast-exits 'no workers'" (the C3,
+# 2026-08-18 contract this supersedes) — that whole exit path is now removed entirely. ---
 T0=$(date +%s)
-OUT2=$(bash "$BIN" wait "/tmp/${TEST_TAG}-nonexistent" --timeout 20)
+OUT2=$(bash "$BIN" wait "/tmp/${TEST_TAG}-nonexistent" --timeout 25)
 T1=$(date +%s)
 ELAPSED2=$((T1 - T0))
-if [ "$OUT2" = "no workers" ] && [ "$ELAPSED2" -ge 9 ] && [ "$ELAPSED2" -le 20 ]; then
-    pass "test2 no-worker-fast-exit: reason='$OUT2' elapsed=${ELAPSED2}s"
+if [ "$OUT2" = "timeout" ] && [ "$ELAPSED2" -ge 25 ] && [ "$ELAPSED2" -le 32 ]; then
+    pass "test2 no-worker-never-exits: reason='$OUT2' elapsed=${ELAPSED2}s"
 else
-    fail "test2 no-worker-fast-exit: reason='$OUT2' elapsed=${ELAPSED2}s (expected 'no workers', 9-20s)"
+    fail "test2 no-worker-never-exits: reason='$OUT2' elapsed=${ELAPSED2}s (expected 'timeout', ~25-32s, never 'no workers')"
 fi
 
-# --- Test 2b (C3, 2026-08-18): timeout SHORTER than the empty-NAMES grace window -> the ceiling
-# still wins cleanly, proving the two exit paths don't interfere (whichever threshold is hit
-# first wins, coarse to the 5s poll granularity — same documented cost Test 4 already accepts). ---
+# --- Test 2b: short timeout with zero workers -> ordinary timeout. The old "two exit paths
+# don't interfere" rationale no longer applies (there is only ONE exit path for an empty
+# roster now: the timeout ceiling) — kept as a minimal short-timeout smoke test. ---
 T0=$(date +%s)
 OUT2B=$(bash "$BIN" wait "/tmp/${TEST_TAG}-nonexistent-2b" --timeout 3)
 T1=$(date +%s)
 ELAPSED2B=$((T1 - T0))
 if [ "$OUT2B" = "timeout" ] && [ "$ELAPSED2B" -ge 3 ] && [ "$ELAPSED2B" -le 10 ]; then
-    pass "test2b timeout-shorter-than-grace: reason='$OUT2B' elapsed=${ELAPSED2B}s"
+    pass "test2b timeout-short: reason='$OUT2B' elapsed=${ELAPSED2B}s"
 else
-    fail "test2b timeout-shorter-than-grace: reason='$OUT2B' elapsed=${ELAPSED2B}s (expected 'timeout', 3-10s)"
+    fail "test2b timeout-short: reason='$OUT2B' elapsed=${ELAPSED2B}s (expected 'timeout', 3-10s)"
 fi
 
-# --- Test 3: two concurrent wait processes exit cleanly on the same idle transition ---
-PROJ3="/tmp/${TEST_TAG}-3a"
-SID3="${TEST_TAG}-sess-3a"
-create_worker w1 "$PROJ3" "$SID3" idle 0 >/dev/null
-OUT3A_FILE="/tmp/${TEST_TAG}-3a.out"
-OUT3B_FILE="/tmp/${TEST_TAG}-3b.out"
-bash "$BIN" wait "$PROJ3" --timeout 40 > "$OUT3A_FILE" 2>&1 &
-P3A=$!
-bash "$BIN" wait "$PROJ3" --timeout 40 > "$OUT3B_FILE" 2>&1 &
-P3B=$!
-wait "$P3A"; RC3A=$?
-wait "$P3B"; RC3B=$?
-OUT3A=$(cat "$OUT3A_FILE"); OUT3B=$(cat "$OUT3B_FILE")
-if [ "$RC3A" = 0 ] && [ "$RC3B" = 0 ] && [ "$OUT3A" = "workers idle" ] && [ "$OUT3B" = "workers idle" ]; then
-    pass "test3 concurrent-wait: both exited 0 with 'workers idle'"
+# --- Test 3 (New Case 3): worker genuinely "working" (chatty, keeps #{window_activity} fresh)
+# for ~10s, then goes quiet and edges to idle -> exits "workers idle" within the existing
+# 3-sample/5s-poll stability window after the edge. Core positive-path proof of the transition
+# gate: a real working phase DOES unlock the exit. ---
+PROJ3="/tmp/${TEST_TAG}-3"
+SID3="${TEST_TAG}-sess-3"
+create_worker w1 "$PROJ3" "$SID3" working 0 1 >/dev/null
+OUT3_FILE="/tmp/${TEST_TAG}-3.out"
+bash "$BIN" wait "$PROJ3" --timeout 40 > "$OUT3_FILE" 2>&1 &
+P3=$!
+sleep 10
+go_quiet "$PROJ3"
+set_hook_status "$SID3" idle "$PROJ3"
+T0=$(date +%s)
+wait "$P3"; RC3=$?
+T1=$(date +%s)
+OUT3=$(cat "$OUT3_FILE")
+ELAPSED3=$((T1 - T0))
+if [ "$OUT3" = "workers idle" ] && [ "$RC3" = 0 ] && [ "$ELAPSED3" -le 20 ]; then
+    pass "test3 working-then-idle-edge: reason='$OUT3' ${ELAPSED3}s after the edge"
 else
-    fail "test3 concurrent-wait: rc=($RC3A,$RC3B) out=('$OUT3A','$OUT3B')"
+    fail "test3 working-then-idle-edge: rc=$RC3 reason='$OUT3' elapsed=${ELAPSED3}s (expected 'workers idle', <=20s after edge)"
 fi
-rm -f "$OUT3A_FILE" "$OUT3B_FILE"
+rm -f "$OUT3_FILE"
 destroy_worker w1 "$PROJ3" "$SID3"
 
-# --- Test 4: probe target vanishes mid-wait (hard failure) -> never reports "workers idle" ---
+# --- Test 3b (New Case 5, was Test 3 "concurrent-wait", adapted): two concurrent `wait`
+# processes both armed during a genuine working phase (chatty) -> both must exit "workers
+# idle" together on the same edge. ---
+PROJ3B="/tmp/${TEST_TAG}-3b"
+SID3B="${TEST_TAG}-sess-3b"
+create_worker w1 "$PROJ3B" "$SID3B" working 0 1 >/dev/null
+OUT3BA_FILE="/tmp/${TEST_TAG}-3ba.out"
+OUT3BB_FILE="/tmp/${TEST_TAG}-3bb.out"
+bash "$BIN" wait "$PROJ3B" --timeout 40 > "$OUT3BA_FILE" 2>&1 &
+P3BA=$!
+bash "$BIN" wait "$PROJ3B" --timeout 40 > "$OUT3BB_FILE" 2>&1 &
+P3BB=$!
+sleep 8
+go_quiet "$PROJ3B"
+set_hook_status "$SID3B" idle "$PROJ3B"
+wait "$P3BA"; RC3BA=$?
+wait "$P3BB"; RC3BB=$?
+OUT3BA=$(cat "$OUT3BA_FILE"); OUT3BB=$(cat "$OUT3BB_FILE")
+if [ "$RC3BA" = 0 ] && [ "$RC3BB" = 0 ] && [ "$OUT3BA" = "workers idle" ] && [ "$OUT3BB" = "workers idle" ]; then
+    pass "test3b concurrent-wait-during-working: both exited 0 with 'workers idle'"
+else
+    fail "test3b concurrent-wait-during-working: rc=($RC3BA,$RC3BB) out=('$OUT3BA','$OUT3BB')"
+fi
+rm -f "$OUT3BA_FILE" "$OUT3BB_FILE"
+destroy_worker w1 "$PROJ3B" "$SID3B"
+
+# --- Test 4 (unchanged — verified compatible with the transition gate): probe target
+# vanishes mid-wait (hard failure). The vanished-SESSION path routes entirely through the
+# empty-NAMES branch, which has no exit condition of its own regardless of SAW_WORKING ->
+# always ends in "timeout", same as before this change. ---
 PROJ4="/tmp/${TEST_TAG}-4"
 SID4="${TEST_TAG}-sess-4"
 create_worker w1 "$PROJ4" "$SID4" working 0 >/dev/null
@@ -356,12 +467,16 @@ fi
 rm -f "$OUT4_FILE"
 destroy_worker w1 "$PROJ4" "$SID4"
 
-# --- Test 5: idle worker WITH a genuinely open *.output write handle -> holds until it closes.
-# Also covers the /tmp vs /private/tmp resolution gotcha: the handle is opened via the
-# UNRESOLVED raw_tasks_dir path while the hook internally resolves to /private/tmp/... ---
+# --- Test 5 (adapted for the transition gate; preserves the original idle+bg hold intent):
+# worker observed "working" once first (brief — the pre-flip window here is short enough that
+# window_activity stays fresh without chatty), THEN flips to idle WITH a genuinely open
+# *.output write handle -> holds until the handle closes, exits "workers idle" only once BOTH
+# the working phase and the bg-task have completed. Also covers the /tmp vs /private/tmp
+# resolution gotcha unchanged: the handle is opened via the UNRESOLVED raw_tasks_dir path
+# while the hook internally resolves to /private/tmp/... ---
 PROJ5="/tmp/${TEST_TAG}-5"
 SID5="${TEST_TAG}-sess-5"
-create_worker w1 "$PROJ5" "$SID5" idle 0 >/dev/null
+create_worker w1 "$PROJ5" "$SID5" working 0 >/dev/null
 TDIR_RAW=$(raw_tasks_dir "$PROJ5" "$SID5")
 TDIR_REAL=$(real_tasks_dir "$PROJ5" "$SID5")
 TASK_ID="${TEST_TAG}task5"
@@ -378,9 +493,11 @@ sleep 0.5
 OUT5_FILE="/tmp/${TEST_TAG}-5.out"
 bash "$BIN" wait "$PROJ5" --timeout 40 > "$OUT5_FILE" 2>&1 &
 P5=$!
-sleep 12
+sleep 2
+set_hook_status "$SID5" idle "$PROJ5"
+sleep 10
 if kill -0 "$P5" 2>/dev/null; then
-    pass "test5b open-handle: still waiting after 12s while .output handle open (opened via unresolved /tmp path, must be detected via the resolved /private/tmp path)"
+    pass "test5b open-handle: still waiting while .output handle open (opened via unresolved /tmp path, must be detected via the resolved /private/tmp path)"
 else
     fail "test5b open-handle: exited early while handle was still open — $(cat "$OUT5_FILE")"
 fi
@@ -398,11 +515,12 @@ fi
 rm -f "$OUT5_FILE"
 destroy_worker w1 "$PROJ5" "$SID5"
 
-# --- Test 6: lsof unresolvable mid-check (PATH stripped of /usr/sbin) -> bg-check probe error ->
-# never reports "workers idle" even though the worker IS genuinely idle with zero real bg tasks,
-# ends in timeout. Isolates the bg-check's OWN error path (distinct from Test 4's status-check
-# target-vanishes case) — same PATH-stripping technique the (now-removed) block_timer_no_
-# worker_working hook's tmux-unresolvable case used. ---
+# --- Test 6 (unchanged — verified compatible with the transition gate): lsof unresolvable
+# mid-check (PATH stripped of /usr/sbin) -> bg-check probe error -> the idle worker's ALL_
+# NONBLOCKING never reaches 1 regardless of SAW_WORKING (the probe error itself keeps it
+# classified busy every poll), so this always ends in "timeout", same as before this change.
+# Isolates the bg-check's OWN error path (distinct from Test 4's status-check target-vanishes
+# case). ---
 PROJ6="/tmp/${TEST_TAG}-6"
 SID6="${TEST_TAG}-sess-6"
 create_worker w1 "$PROJ6" "$SID6" idle 0 >/dev/null
@@ -418,56 +536,89 @@ fi
 rm -f "$OUT6_FILE"
 destroy_worker w1 "$PROJ6" "$SID6"
 
-# --- Test 7 (2026-08-19 incident regression): session ALIVE, status stuck on verbatim "unknown"
-# forever (no hooks.json entry ever populated) -> `wait` must exit promptly with "worker
-# terminal", not grind to the timeout ceiling — this is the exact live incident (a dead worker's
-# claude process silently gone, worker_status returning "unknown" on every poll forever). Trace
-# must show class=terminal on the poll line and reason=worker_terminal on the exit line. ---
+# --- Test 7 (2026-08-19 incident regression, adapted for the transition gate): session
+# ALIVE, status stuck on verbatim "unknown" forever (no hooks.json entry ever populated), but
+# this worker was NEVER observed "working" in this invocation -> the gate must hold: `wait` no
+# longer short-circuits to "worker terminal" for a terminal-from-the-start worker, it runs to
+# the timeout ceiling instead. The genuine "working -> terminal" proof now lives in Test 8b
+# (New Case 4), which arms the gate with a real working phase first. ---
 PROJ7="/tmp/${TEST_TAG}-7"
 SID7="${TEST_TAG}-sess-7"
 create_worker_no_hook w1 "$PROJ7" "$SID7" >/dev/null
 TRACE_SIZE_BEFORE7=$([ -f "$TRACE_FILE" ] && wc -c < "$TRACE_FILE" || echo 0)
 T0=$(date +%s)
-OUT7=$(bash "$BIN" wait "$PROJ7" --timeout 40)
+OUT7=$(bash "$BIN" wait "$PROJ7" --timeout 25)
 T1=$(date +%s)
 ELAPSED7=$((T1 - T0))
-if [ "$OUT7" = "worker terminal" ] && [ "$ELAPSED7" -ge 9 ] && [ "$ELAPSED7" -le 25 ]; then
-    pass "test7a stuck-unknown-incident: reason='$OUT7' elapsed=${ELAPSED7}s"
+if [ "$OUT7" = "timeout" ] && [ "$ELAPSED7" -ge 25 ] && [ "$ELAPSED7" -le 32 ]; then
+    pass "test7a stuck-unknown-from-start: reason='$OUT7' elapsed=${ELAPSED7}s"
 else
-    fail "test7a stuck-unknown-incident: reason='$OUT7' elapsed=${ELAPSED7}s (expected 'worker terminal', 9-25s)"
+    fail "test7a stuck-unknown-from-start: reason='$OUT7' elapsed=${ELAPSED7}s (expected 'timeout', ~25-32s)"
 fi
 if [ -f "$TRACE_FILE" ]; then
     TRACE_NEW7=$(tail -c "+$((TRACE_SIZE_BEFORE7 + 1))" "$TRACE_FILE")
-    if [[ "$TRACE_NEW7" == *"class=terminal"* ]] && [[ "$TRACE_NEW7" == *"event=exit reason=worker_terminal"* ]]; then
-        pass "test7b trace-terminal: new trace lines contain class=terminal and event=exit reason=worker_terminal"
+    if [[ "$TRACE_NEW7" == *"class=terminal"* ]] && [[ "$TRACE_NEW7" == *"event=exit reason=timeout"* ]] \
+        && [[ "$TRACE_NEW7" != *"saw_working=1"* ]]; then
+        pass "test7b trace-terminal-gated: class=terminal polls present, exit reason=timeout, saw_working never 1"
     else
-        fail "test7b trace-terminal: expected class=terminal + event=exit reason=worker_terminal, got: $TRACE_NEW7"
+        fail "test7b trace-terminal-gated: got: $TRACE_NEW7"
     fi
 else
-    fail "test7b trace-terminal: $TRACE_FILE does not exist after a wait run"
+    fail "test7b trace-terminal-gated: $TRACE_FILE does not exist after a wait run"
 fi
 destroy_worker w1 "$PROJ7" "$SID7"
 
-# --- Test 8: session ALIVE, status stuck on "limit reached" (wrapper exits immediately, zero
-# children, pane held open by remain-on-exit) -> exits "worker terminal" promptly. ---
+# --- Test 8 (adapted for the transition gate): session ALIVE, status stuck on "limit reached"
+# from the start (never observed working) -> gate holds, runs to timeout. The genuine
+# "working -> killed -> terminal" proof is Test 8b (New Case 4) below. ---
 PROJ8="/tmp/${TEST_TAG}-8"
 create_worker_limit_reached w1 "$PROJ8" >/dev/null
 T0=$(date +%s)
-OUT8=$(bash "$BIN" wait "$PROJ8" --timeout 40)
+OUT8=$(bash "$BIN" wait "$PROJ8" --timeout 25)
 T1=$(date +%s)
 ELAPSED8=$((T1 - T0))
-if [ "$OUT8" = "worker terminal" ] && [ "$ELAPSED8" -ge 9 ] && [ "$ELAPSED8" -le 25 ]; then
-    pass "test8 stuck-limit-reached: reason='$OUT8' elapsed=${ELAPSED8}s"
+if [ "$OUT8" = "timeout" ] && [ "$ELAPSED8" -ge 25 ] && [ "$ELAPSED8" -le 32 ]; then
+    pass "test8 stuck-limit-reached-from-start: reason='$OUT8' elapsed=${ELAPSED8}s"
 else
-    fail "test8 stuck-limit-reached: reason='$OUT8' elapsed=${ELAPSED8}s (expected 'worker terminal', 9-25s)"
+    fail "test8 stuck-limit-reached-from-start: reason='$OUT8' elapsed=${ELAPSED8}s (expected 'timeout', ~25-32s)"
 fi
 destroy_worker w1 "$PROJ8" "${TEST_TAG}-sess-8"
 
-# --- Test 9: mixed project — one worker terminal (limit reached) from the start, one worker
-# genuinely "working" -> `wait` must NOT exit early (terminal folds into "non-blocking" but a
-# real busy worker still blocks). Once the working worker finishes (flipped to idle), `wait`
-# exits "worker terminal" (not "workers idle") because the terminal worker is still there —
-# validates fold-in + exit-line precedence together. ---
+# --- Test 8b (New Case 4): worker genuinely "working" (chatty), then the claude child is
+# killed while the tmux SESSION stays alive (remain-on-exit marks the pane dead once the
+# wrapper's own `wait $CLAUDE_PID` returns) -> _worker_detect_status reports "limit reached"
+# thereafter -> `wait` exits "worker terminal" once stable, because a real working poll
+# preceded the edge. Distinct from Test 4's session-GONE case (empty-NAMES path, never exits
+# early, unchanged above). ---
+PROJ8B="/tmp/${TEST_TAG}-8b"
+SID8B="${TEST_TAG}-sess-8b"
+create_worker w1 "$PROJ8B" "$SID8B" working 0 1 >/dev/null
+OUT8B_FILE="/tmp/${TEST_TAG}-8b.out"
+bash "$BIN" wait "$PROJ8B" --timeout 40 > "$OUT8B_FILE" 2>&1 &
+P8B=$!
+sleep 8
+T0=$(date +%s)
+kill_claude_child "$PROJ8B"
+wait "$P8B"; RC8B=$?
+T1=$(date +%s)
+OUT8B=$(cat "$OUT8B_FILE")
+ELAPSED8B=$((T1 - T0))
+if [ "$OUT8B" = "worker terminal" ] && [ "$RC8B" = 0 ] && [ "$ELAPSED8B" -le 25 ]; then
+    pass "test8b working-then-child-killed: reason='$OUT8B' ${ELAPSED8B}s after the edge"
+else
+    fail "test8b working-then-child-killed: rc=$RC8B reason='$OUT8B' elapsed=${ELAPSED8B}s (expected 'worker terminal', <=25s after edge)"
+fi
+rm -f "$OUT8B_FILE"
+destroy_worker w1 "$PROJ8B" "$SID8B"
+
+# --- Test 9 (unchanged — verified compatible with the transition gate): mixed project — one
+# worker terminal (limit reached) from the start, one worker genuinely "working" (fresh
+# window_activity at creation covers this test's short 5s pre-flip window without chatty) ->
+# `wait` must NOT exit early (terminal folds into "non-blocking" but a real busy worker still
+# blocks; SAW_WORKING is set from wB's very first poll). Once the working worker finishes
+# (flipped to idle), `wait` exits "worker terminal" (not "workers idle") because the terminal
+# worker is still there — validates fold-in + exit-line precedence together, now with the gate
+# already satisfied from wB's early working poll. ---
 PROJ9="/tmp/${TEST_TAG}-9"
 SID9B="${TEST_TAG}-sess-9b"
 create_worker_limit_reached wA "$PROJ9" >/dev/null
@@ -496,28 +647,73 @@ rm -f "$OUT9_FILE"
 destroy_worker wA "$PROJ9" "${TEST_TAG}-sess-9a"
 destroy_worker wB "$PROJ9" "$SID9B"
 
-# --- Test 10: terminal worker ("unknown") WITH a genuinely open *.output write handle (an
-# orphaned bg process outliving its dead coordinator) -> still exits "worker terminal" promptly,
-# NOT held open until the handle closes — regression-guards the deliberate design decision to
-# skip the bg-task probe for terminal statuses (unlike Test 5's idle+bg case, which DOES hold). ---
+# --- Test 10 (adapted for the transition gate; preserves the original bg-skipped-for-
+# terminal intent): worker observed "working" once first, then the hooks.json entry is
+# DELETED (session/process stay alive — reproduces "unknown" without a session/process
+# teardown) WHILE a genuinely open *.output write handle stays open throughout -> still exits
+# "worker terminal" promptly once stable, NOT held open until the handle closes —
+# regression-guards the deliberate design decision to skip the bg-task probe for terminal
+# statuses (unlike Test 5's idle+bg case, which DOES hold). ---
 PROJ10="/tmp/${TEST_TAG}-10"
 SID10="${TEST_TAG}-sess-10"
-create_worker_no_hook w1 "$PROJ10" "$SID10" >/dev/null
+create_worker w1 "$PROJ10" "$SID10" working 0 >/dev/null
 TDIR_RAW10=$(raw_tasks_dir "$PROJ10" "$SID10")
 TASK_ID10="${TEST_TAG}task10"
 start_fake_bg_task "$TDIR_RAW10" "$TASK_ID10"
 sleep 0.5
+OUT10_FILE="/tmp/${TEST_TAG}-10.out"
+bash "$BIN" wait "$PROJ10" --timeout 40 > "$OUT10_FILE" 2>&1 &
+P10=$!
+sleep 2
+delete_hook_entry "$SID10"
 T0=$(date +%s)
-OUT10=$(bash "$BIN" wait "$PROJ10" --timeout 40)
+wait "$P10"; RC10=$?
 T1=$(date +%s)
+OUT10=$(cat "$OUT10_FILE")
 ELAPSED10=$((T1 - T0))
-if [ "$OUT10" = "worker terminal" ] && [ "$ELAPSED10" -ge 9 ] && [ "$ELAPSED10" -le 25 ]; then
-    pass "test10 terminal-bg-check-skipped: reason='$OUT10' elapsed=${ELAPSED10}s (open handle correctly ignored for a terminal worker)"
+if [ "$OUT10" = "worker terminal" ] && [ "$RC10" = 0 ] && [ "$ELAPSED10" -le 25 ]; then
+    pass "test10 working-then-hook-vanishes-bg-open: reason='$OUT10' ${ELAPSED10}s after the edge (open handle correctly ignored for a terminal worker)"
 else
-    fail "test10 terminal-bg-check-skipped: reason='$OUT10' elapsed=${ELAPSED10}s (expected 'worker terminal', 9-25s — bg-check must be skipped for terminal statuses)"
+    fail "test10 working-then-hook-vanishes-bg-open: rc=$RC10 reason='$OUT10' elapsed=${ELAPSED10}s (expected 'worker terminal', <=25s after edge)"
 fi
 kill_fake_bg_task "$TASK_ID10"
+rm -f "$OUT10_FILE"
 destroy_worker w1 "$PROJ10" "$SID10"
+
+# --- Test 11 (New Case 6): `wait` armed while the worker is already idle (no prior working)
+# -> keeps running through the idle-from-arm phase (proven via a mid-run liveness check well
+# past the old 15s early-exit threshold), THEN the worker becomes genuinely "working" (chatty,
+# so window_activity stays fresh despite the flip happening long after creation), THEN idle
+# again -> exits "workers idle" only after that SECOND transition, never on the first idle
+# phase. ---
+PROJ11="/tmp/${TEST_TAG}-11"
+SID11="${TEST_TAG}-sess-11"
+create_worker w1 "$PROJ11" "$SID11" idle 0 1 >/dev/null
+OUT11_FILE="/tmp/${TEST_TAG}-11.out"
+bash "$BIN" wait "$PROJ11" --timeout 60 > "$OUT11_FILE" 2>&1 &
+P11=$!
+sleep 18
+if kill -0 "$P11" 2>/dev/null; then
+    pass "test11a armed-while-idle: still waiting after 18s of idle-from-arm (no prior working, gate correctly holds)"
+else
+    fail "test11a armed-while-idle: exited early during the idle-from-arm phase — $(cat "$OUT11_FILE")"
+fi
+set_hook_status "$SID11" working "$PROJ11"
+sleep 7
+set_hook_status "$SID11" idle "$PROJ11"
+go_quiet "$PROJ11"
+T0=$(date +%s)
+wait "$P11"; RC11=$?
+T1=$(date +%s)
+OUT11=$(cat "$OUT11_FILE")
+ELAPSED11=$((T1 - T0))
+if [ "$OUT11" = "workers idle" ] && [ "$RC11" = 0 ] && [ "$ELAPSED11" -le 25 ]; then
+    pass "test11b second-transition-exits: reason='$OUT11' ${ELAPSED11}s after the working->idle edge (not the first idle phase)"
+else
+    fail "test11b second-transition-exits: rc=$RC11 reason='$OUT11' elapsed=${ELAPSED11}s (expected 'workers idle', <=25s after the SECOND edge)"
+fi
+rm -f "$OUT11_FILE"
+destroy_worker w1 "$PROJ11" "$SID11"
 
 echo "=== $([ $RESULT -eq 0 ] && echo ALL PASSED || echo SOME FAILED) ==="
 exit $RESULT
