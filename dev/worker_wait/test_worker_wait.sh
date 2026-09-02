@@ -295,7 +295,7 @@ trap cleanup_all EXIT
 backup_hooks
 
 echo "=== worker-cli wait — integration tests ==="
-echo "(2026-xx transition-gate change: 'wait' may only exit idle/terminal after observing a"
+echo "(2026-09-02 transition-gate change: 'wait' may only exit idle/terminal after observing a"
 echo " real 'working' poll in THIS invocation — see bin/worker-cli wait case + SAW_WORKING)"
 
 # --- Test 1 (transition-gate core proof, New Case 1): idle worker FROM THE START, never

@@ -12,7 +12,7 @@ replacement for the orchestrator's background sleep-timer.
 **Purpose:** Exercise the real `worker-cli wait` binary against real tmux sessions + a
 scoped `hooks.json` entry (backed up/restored around the run, never left dirty).
 
-**Transition-gate contract (2026-xx):** `wait` may only exit `"workers idle"` or `"worker
+**Transition-gate contract (2026-09-02):** `wait` may only exit `"workers idle"` or `"worker
 terminal"` if THIS invocation observed at least one `working`-status poll first (`SAW_
 WORKING`, set only on a verbatim `working` classification, never on the terminal/unknown
 default-arm busy path). An idle-at-arm or never-registered worker is a *state*, not a

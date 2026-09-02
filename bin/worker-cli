@@ -542,7 +542,7 @@ case "$CMD" in
         START_TS=$(date +%s)
         STABLE_COUNT=0
         EMPTY_COUNT=0
-        # Transition-gate flag (2026-xx): `wait` may only exit "workers idle"/"worker
+        # Transition-gate flag (2026-09-02): `wait` may only exit "workers idle"/"worker
         # terminal" once THIS invocation has observed a real "working" poll — an idle-at-arm
         # or never-registered worker must never look like a finished transition. Level-
         # triggered exits on a bare state (armed already-idle, armed on zero workers) were
