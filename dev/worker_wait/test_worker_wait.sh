@@ -140,9 +140,9 @@ go_quiet() {
 # kill_claude_child PROJ_DIR — kills just the claude-dummy process (pid recorded by
 # create_worker), leaving the tmux session/pane alive. remain-on-exit then marks the pane
 # dead once the wrapper's own `wait $CLAUDE_PID` returns and the wrapper script itself exits
-# — _worker_detect_status reads that as pane_dead=1 -> "limit reached": the "claude child
-# gone" terminal path, distinct from killing the whole SESSION (which instead empties
-# worker_list's NAMES entirely and never classifies as terminal).
+# — _worker_detect_status reads that as pane_dead=1 -> dead: the "claude child gone"
+# terminal path, distinct from killing the whole SESSION (which instead empties
+# worker_list's NAMES entirely and never classifies as dead).
 kill_claude_child() {
     local proj_dir="$1"
     local pf="$proj_dir/.claude.pid"
@@ -151,8 +151,11 @@ kill_claude_child() {
 }
 
 # delete_hook_entry SESSION_ID — removes the hooks.json entry while the tmux session/process
-# stay alive, reproducing "unknown" (no hook data) without tearing down the worker itself —
-# used to edge a genuinely-working fixture into the stuck-unknown terminal shape mid-test.
+# stay alive, reproducing "no hook data". By itself this is NOT a dead signal under the
+# working/idle/dead vocabulary (2026-09-02) — it just falls into the same shared
+# working/idle window-activity check as any other no-hook-entry worker (working while
+# fresh, idle once quiet > 10s). Used in Test 10 alongside kill_claude_child to build a
+# realistic dead-AND-hook-orphaned worker, not on its own.
 delete_hook_entry() {
     local sid="$1"
     jq --arg sid "$sid" 'del(.[$sid])' "$HOOKS_FILE" > "$HOOKS_FILE.tmp.$$" 2>/dev/null \
@@ -161,11 +164,13 @@ delete_hook_entry() {
 
 # create_worker_no_hook NAME PROJ_DIR SESSION_ID
 #   Mirrors create_worker (claude-dummy child alive + JSONL present) but deliberately skips
-#   set_hook_status — no hooks.json entry ever exists for this session_id, reproducing the live
-#   incident's shape: session/pane ALIVE (tmux session found by worker_list, claude-dummy child
-#   present), status stuck on verbatim "unknown" forever ("no hook entry" branch in
-#   _worker_detect_status). Distinct from Test 4's session-GONE fixture (tmux session itself
-#   killed — routes through the empty-NAMES path instead, untouched by this feature).
+#   set_hook_status — no hooks.json entry ever exists for this session_id. Session/pane ALIVE
+#   (tmux session found by worker_list, claude-dummy child present), no dead signal fires, so
+#   this resolves via the shared no-hook-entry window-activity check: "working" while the pane
+#   is still fresh (just created), "idle" once quiet > 10s — NOT "dead" (2026-09-02 vocabulary
+#   change; this fixture used to read as the old "unknown" placeholder). Distinct from Test 4's
+#   session-GONE fixture (tmux session itself killed — routes through the empty-NAMES path
+#   instead, untouched by this feature).
 create_worker_no_hook() {
     local name="$1" proj_dir="$2" session_id="$3"
     mkdir -p "$proj_dir"
@@ -193,12 +198,11 @@ INNER
     echo "$session"
 }
 
-# create_worker_limit_reached NAME PROJ_DIR
+# create_worker_dead NAME PROJ_DIR
 #   Wrapper exits immediately (no claude-dummy child ever forked); pane stays alive via
-#   remain-on-exit, so _worker_detect_status's process-tree check (no children under pane_pid)
-#   hits the "limit reached" branch directly — returns before the JSONL/hooks lookups, so
-#   neither is needed for this fixture.
-create_worker_limit_reached() {
+#   remain-on-exit, so #{pane_dead} flips to 1 and _worker_detect_status returns "dead"
+#   directly — returns before the JSONL/hooks lookups, so neither is needed for this fixture.
+create_worker_dead() {
     local name="$1" proj_dir="$2"
     mkdir -p "$proj_dir"
     local session="worker-$(basename "$proj_dir")-$name"
@@ -295,7 +299,7 @@ trap cleanup_all EXIT
 backup_hooks
 
 echo "=== worker-cli wait — integration tests ==="
-echo "(2026-09-02 transition-gate change: 'wait' may only exit idle/terminal after observing a"
+echo "(2026-09-02 transition-gate change: 'wait' may only exit idle/dead after observing a"
 echo " real 'working' poll in THIS invocation — see bin/worker-cli wait case + SAW_WORKING)"
 
 # --- Test 1 (transition-gate core proof, New Case 1): idle worker FROM THE START, never
@@ -319,7 +323,10 @@ fi
 # --- Test 1c (C1, 2026-08-18, adapted): trace shows the run started, never observed a
 # "working" poll (saw_working never reaches 1), and exited on the timeout ceiling. ---
 if [ -f "$TRACE_FILE" ]; then
-    TRACE_NEW1=$(tail -c "+$((TRACE_SIZE_BEFORE1 + 1))" "$TRACE_FILE")
+    # Scoped to THIS test's project tag — the trace file is shared with any concurrently
+    # running real `wait` invocation on the machine, whose own lines (different project=)
+    # would otherwise pollute a byte-offset-only diff.
+    TRACE_NEW1=$(tail -c "+$((TRACE_SIZE_BEFORE1 + 1))" "$TRACE_FILE" | grep "project=$(basename "$PROJ1")")
     if [[ "$TRACE_NEW1" == *"event=start"* ]] && [[ "$TRACE_NEW1" == *"event=exit reason=timeout"* ]] \
         && [[ "$TRACE_NEW1" != *"saw_working=1"* ]]; then
         pass "test1c trace-observability: event=start + event=exit reason=timeout, saw_working never 1"
@@ -536,60 +543,67 @@ fi
 rm -f "$OUT6_FILE"
 destroy_worker w1 "$PROJ6" "$SID6"
 
-# --- Test 7 (2026-08-19 incident regression, adapted for the transition gate): session
-# ALIVE, status stuck on verbatim "unknown" forever (no hooks.json entry ever populated), but
-# this worker was NEVER observed "working" in this invocation -> the gate must hold: `wait` no
-# longer short-circuits to "worker terminal" for a terminal-from-the-start worker, it runs to
-# the timeout ceiling instead. The genuine "working -> terminal" proof now lives in Test 8b
-# (New Case 4), which arms the gate with a real working phase first. ---
+# --- Test 7 (2026-08-19 incident regression, RE-PURPOSED for the working/idle/dead
+# vocabulary, 2026-09-02 — verified by an actual run, not assumed): session ALIVE, no
+# hooks.json entry ever populated. Under the OLD vocabulary this got stuck on a distinct
+# "unknown" placeholder forever — the original incident. Under the NEW vocabulary there is
+# no such stuck state: a freshly created pane with no hook data legitimately reads as
+# "working" for its first ~10s (we cannot prove otherwise for a just-created pane — a
+# correct default, not a misclassification), then self-heals to "idle" once quiet > 10s,
+# with no orchestrator/hook data ever needed. This IS the fix for the original incident
+# (self-healing beats a stuck-forever placeholder): `wait` correctly arms the gate on the
+# real initial working reading and exits "workers idle" once the worker settles — it never
+# needs a special terminal carve-out, and it never grinds to the timeout ceiling either.
+# (The "never observed working, gate holds" proof lives in Tests 1/2/11a instead, which use
+# an explicit idle hook status or no worker at all — neither goes through this shared
+# fresh-pane window.) ---
 PROJ7="/tmp/${TEST_TAG}-7"
 SID7="${TEST_TAG}-sess-7"
 create_worker_no_hook w1 "$PROJ7" "$SID7" >/dev/null
 TRACE_SIZE_BEFORE7=$([ -f "$TRACE_FILE" ] && wc -c < "$TRACE_FILE" || echo 0)
 T0=$(date +%s)
-OUT7=$(bash "$BIN" wait "$PROJ7" --timeout 25)
+OUT7=$(bash "$BIN" wait "$PROJ7" --timeout 40)
 T1=$(date +%s)
 ELAPSED7=$((T1 - T0))
-if [ "$OUT7" = "timeout" ] && [ "$ELAPSED7" -ge 25 ] && [ "$ELAPSED7" -le 32 ]; then
-    pass "test7a stuck-unknown-from-start: reason='$OUT7' elapsed=${ELAPSED7}s"
+if [ "$OUT7" = "workers idle" ] && [ "$ELAPSED7" -ge 9 ] && [ "$ELAPSED7" -le 30 ]; then
+    pass "test7a no-hook-entry-self-heals: reason='$OUT7' elapsed=${ELAPSED7}s"
 else
-    fail "test7a stuck-unknown-from-start: reason='$OUT7' elapsed=${ELAPSED7}s (expected 'timeout', ~25-32s)"
+    fail "test7a no-hook-entry-self-heals: reason='$OUT7' elapsed=${ELAPSED7}s (expected 'workers idle', ~9-30s)"
 fi
 if [ -f "$TRACE_FILE" ]; then
-    TRACE_NEW7=$(tail -c "+$((TRACE_SIZE_BEFORE7 + 1))" "$TRACE_FILE")
-    if [[ "$TRACE_NEW7" == *"class=terminal"* ]] && [[ "$TRACE_NEW7" == *"event=exit reason=timeout"* ]] \
-        && [[ "$TRACE_NEW7" != *"saw_working=1"* ]]; then
-        pass "test7b trace-terminal-gated: class=terminal polls present, exit reason=timeout, saw_working never 1"
+    TRACE_NEW7=$(tail -c "+$((TRACE_SIZE_BEFORE7 + 1))" "$TRACE_FILE" | grep "project=$(basename "$PROJ7")")
+    if [[ "$TRACE_NEW7" == *"status=working"* ]] && [[ "$TRACE_NEW7" == *"status=idle"* ]] \
+        && [[ "$TRACE_NEW7" == *"event=exit reason=workers_idle"* ]]; then
+        pass "test7b trace-self-heal: shows working polls settling to idle polls, exit reason=workers_idle"
     else
-        fail "test7b trace-terminal-gated: got: $TRACE_NEW7"
+        fail "test7b trace-self-heal: got: $TRACE_NEW7"
     fi
 else
-    fail "test7b trace-terminal-gated: $TRACE_FILE does not exist after a wait run"
+    fail "test7b trace-self-heal: $TRACE_FILE does not exist after a wait run"
 fi
 destroy_worker w1 "$PROJ7" "$SID7"
 
-# --- Test 8 (adapted for the transition gate): session ALIVE, status stuck on "limit reached"
-# from the start (never observed working) -> gate holds, runs to timeout. The genuine
-# "working -> killed -> terminal" proof is Test 8b (New Case 4) below. ---
+# --- Test 8 (adapted for the transition gate): session ALIVE, status stuck "dead"
+# (#{pane_dead}=1) from the start (never observed working) -> gate holds, runs to timeout.
+# The genuine "working -> killed -> dead" proof is Test 8b below. ---
 PROJ8="/tmp/${TEST_TAG}-8"
-create_worker_limit_reached w1 "$PROJ8" >/dev/null
+create_worker_dead w1 "$PROJ8" >/dev/null
 T0=$(date +%s)
 OUT8=$(bash "$BIN" wait "$PROJ8" --timeout 25)
 T1=$(date +%s)
 ELAPSED8=$((T1 - T0))
 if [ "$OUT8" = "timeout" ] && [ "$ELAPSED8" -ge 25 ] && [ "$ELAPSED8" -le 32 ]; then
-    pass "test8 stuck-limit-reached-from-start: reason='$OUT8' elapsed=${ELAPSED8}s"
+    pass "test8 stuck-dead-from-start: reason='$OUT8' elapsed=${ELAPSED8}s"
 else
-    fail "test8 stuck-limit-reached-from-start: reason='$OUT8' elapsed=${ELAPSED8}s (expected 'timeout', ~25-32s)"
+    fail "test8 stuck-dead-from-start: reason='$OUT8' elapsed=${ELAPSED8}s (expected 'timeout', ~25-32s)"
 fi
 destroy_worker w1 "$PROJ8" "${TEST_TAG}-sess-8"
 
-# --- Test 8b (New Case 4): worker genuinely "working" (chatty), then the claude child is
-# killed while the tmux SESSION stays alive (remain-on-exit marks the pane dead once the
-# wrapper's own `wait $CLAUDE_PID` returns) -> _worker_detect_status reports "limit reached"
-# thereafter -> `wait` exits "worker terminal" once stable, because a real working poll
-# preceded the edge. Distinct from Test 4's session-GONE case (empty-NAMES path, never exits
-# early, unchanged above). ---
+# --- Test 8b: worker genuinely "working" (chatty), then the claude child is killed while
+# the tmux SESSION stays alive (remain-on-exit marks the pane dead once the wrapper's own
+# `wait $CLAUDE_PID` returns) -> _worker_detect_status reports "dead" thereafter -> `wait`
+# exits "worker dead" once stable, because a real working poll preceded the edge. Distinct
+# from Test 4's session-GONE case (empty-NAMES path, never exits early, unchanged above). ---
 PROJ8B="/tmp/${TEST_TAG}-8b"
 SID8B="${TEST_TAG}-sess-8b"
 create_worker w1 "$PROJ8B" "$SID8B" working 0 1 >/dev/null
@@ -603,32 +617,33 @@ wait "$P8B"; RC8B=$?
 T1=$(date +%s)
 OUT8B=$(cat "$OUT8B_FILE")
 ELAPSED8B=$((T1 - T0))
-if [ "$OUT8B" = "worker terminal" ] && [ "$RC8B" = 0 ] && [ "$ELAPSED8B" -le 25 ]; then
+if [ "$OUT8B" = "worker dead" ] && [ "$RC8B" = 0 ] && [ "$ELAPSED8B" -le 25 ]; then
     pass "test8b working-then-child-killed: reason='$OUT8B' ${ELAPSED8B}s after the edge"
 else
-    fail "test8b working-then-child-killed: rc=$RC8B reason='$OUT8B' elapsed=${ELAPSED8B}s (expected 'worker terminal', <=25s after edge)"
+    fail "test8b working-then-child-killed: rc=$RC8B reason='$OUT8B' elapsed=${ELAPSED8B}s (expected 'worker dead', <=25s after edge)"
 fi
 rm -f "$OUT8B_FILE"
 destroy_worker w1 "$PROJ8B" "$SID8B"
 
-# --- Test 9 (unchanged — verified compatible with the transition gate): mixed project — one
-# worker terminal (limit reached) from the start, one worker genuinely "working" (fresh
-# window_activity at creation covers this test's short 5s pre-flip window without chatty) ->
-# `wait` must NOT exit early (terminal folds into "non-blocking" but a real busy worker still
-# blocks; SAW_WORKING is set from wB's very first poll). Once the working worker finishes
-# (flipped to idle), `wait` exits "worker terminal" (not "workers idle") because the terminal
-# worker is still there — validates fold-in + exit-line precedence together, now with the gate
-# already satisfied from wB's early working poll. ---
+# --- Test 9 (unchanged — verified compatible with the transition gate and the
+# working/idle/dead vocabulary): mixed project — one worker dead (#{pane_dead}=1) from the
+# start, one worker genuinely "working" (fresh window_activity at creation covers this
+# test's short 5s pre-flip window without chatty) -> `wait` must NOT exit early (dead folds
+# into "non-blocking" but a real busy worker still blocks; SAW_WORKING is set from wB's very
+# first poll). Once the working worker finishes (flipped to idle), `wait` exits "worker
+# dead" (not "workers idle") because the dead worker is still there — validates fold-in +
+# exit-line precedence together, now with the gate already satisfied from wB's early
+# working poll. ---
 PROJ9="/tmp/${TEST_TAG}-9"
 SID9B="${TEST_TAG}-sess-9b"
-create_worker_limit_reached wA "$PROJ9" >/dev/null
+create_worker_dead wA "$PROJ9" >/dev/null
 create_worker wB "$PROJ9" "$SID9B" working 0 >/dev/null
 OUT9_FILE="/tmp/${TEST_TAG}-9.out"
 bash "$BIN" wait "$PROJ9" --timeout 40 > "$OUT9_FILE" 2>&1 &
 P9=$!
 sleep 5
 if kill -0 "$P9" 2>/dev/null; then
-    pass "test9a mixed-still-blocks: wait process still alive after 5s (terminal worker did not short-circuit the still-busy worker)"
+    pass "test9a mixed-still-blocks: wait process still alive after 5s (dead worker did not short-circuit the still-busy worker)"
 else
     fail "test9a mixed-still-blocks: wait process already exited early — $(cat "$OUT9_FILE")"
 fi
@@ -638,22 +653,26 @@ wait "$P9"; RC9=$?
 T1=$(date +%s)
 OUT9=$(cat "$OUT9_FILE")
 ELAPSED9=$((T1 - T0))
-if [ "$OUT9" = "worker terminal" ] && [ "$RC9" = 0 ] && [ "$ELAPSED9" -le 25 ]; then
-    pass "test9b mixed-exit-precedence: exited 'worker terminal' ${ELAPSED9}s after the busy worker went idle (not 'workers idle')"
+if [ "$OUT9" = "worker dead" ] && [ "$RC9" = 0 ] && [ "$ELAPSED9" -le 25 ]; then
+    pass "test9b mixed-exit-precedence: exited 'worker dead' ${ELAPSED9}s after the busy worker went idle (not 'workers idle')"
 else
-    fail "test9b mixed-exit-precedence: rc=$RC9 reason='$OUT9' elapsed=${ELAPSED9}s (expected 'worker terminal')"
+    fail "test9b mixed-exit-precedence: rc=$RC9 reason='$OUT9' elapsed=${ELAPSED9}s (expected 'worker dead')"
 fi
 rm -f "$OUT9_FILE"
 destroy_worker wA "$PROJ9" "${TEST_TAG}-sess-9a"
 destroy_worker wB "$PROJ9" "$SID9B"
 
-# --- Test 10 (adapted for the transition gate; preserves the original bg-skipped-for-
-# terminal intent): worker observed "working" once first, then the hooks.json entry is
-# DELETED (session/process stay alive — reproduces "unknown" without a session/process
-# teardown) WHILE a genuinely open *.output write handle stays open throughout -> still exits
-# "worker terminal" promptly once stable, NOT held open until the handle closes —
-# regression-guards the deliberate design decision to skip the bg-task probe for terminal
-# statuses (unlike Test 5's idle+bg case, which DOES hold). ---
+# --- Test 10 (adapted for the transition gate AND the working/idle/dead vocabulary;
+# preserves the original bg-skipped-for-dead intent): worker observed "working" once
+# first, THEN the claude child is killed (pane goes dead via remain-on-exit — the SAME real
+# dead signal Test 8b uses) AND the hooks.json entry is separately deleted (session/process
+# alike show no live hook data — a realistic dead-and-orphaned shape) WHILE a genuinely open
+# *.output write handle stays open throughout -> still exits "worker dead" promptly once
+# stable, NOT held open until the handle closes — regression-guards the deliberate design
+# decision to skip the bg-task probe for dead statuses (unlike Test 5's idle+bg case, which
+# DOES hold). NOTE: a deleted hook entry ALONE is no longer a dead signal under the new
+# vocabulary (see delete_hook_entry's doc comment) — kill_claude_child is what actually
+# produces "dead" here. ---
 PROJ10="/tmp/${TEST_TAG}-10"
 SID10="${TEST_TAG}-sess-10"
 create_worker w1 "$PROJ10" "$SID10" working 0 >/dev/null
@@ -666,15 +685,16 @@ bash "$BIN" wait "$PROJ10" --timeout 40 > "$OUT10_FILE" 2>&1 &
 P10=$!
 sleep 2
 delete_hook_entry "$SID10"
+kill_claude_child "$PROJ10"
 T0=$(date +%s)
 wait "$P10"; RC10=$?
 T1=$(date +%s)
 OUT10=$(cat "$OUT10_FILE")
 ELAPSED10=$((T1 - T0))
-if [ "$OUT10" = "worker terminal" ] && [ "$RC10" = 0 ] && [ "$ELAPSED10" -le 25 ]; then
-    pass "test10 working-then-hook-vanishes-bg-open: reason='$OUT10' ${ELAPSED10}s after the edge (open handle correctly ignored for a terminal worker)"
+if [ "$OUT10" = "worker dead" ] && [ "$RC10" = 0 ] && [ "$ELAPSED10" -le 25 ]; then
+    pass "test10 working-then-dead-bg-open: reason='$OUT10' ${ELAPSED10}s after the edge (open handle correctly ignored for a dead worker)"
 else
-    fail "test10 working-then-hook-vanishes-bg-open: rc=$RC10 reason='$OUT10' elapsed=${ELAPSED10}s (expected 'worker terminal', <=25s after edge)"
+    fail "test10 working-then-dead-bg-open: rc=$RC10 reason='$OUT10' elapsed=${ELAPSED10}s (expected 'worker dead', <=25s after edge)"
 fi
 kill_fake_bg_task "$TASK_ID10"
 rm -f "$OUT10_FILE"
