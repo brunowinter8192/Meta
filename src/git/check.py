@@ -32,8 +32,8 @@ def check_workflow(repo_path: str, auto_stage: bool = False) -> None:
     print_report(staged, unstaged, untracked, skipped, import_warnings, hook_status, diff_staged, diff_unstaged)
 
     if auto_stage:
-        auto_staged = stage_all(repo_path, unstaged, untracked)
-        print_auto_stage_report(auto_staged)
+        auto_staged, stage_errors = stage_all(repo_path, unstaged, untracked)
+        print_auto_stage_report(auto_staged, stage_errors)
         diff_after = run(["git", "diff", "--cached", "--stat"], repo_path)
         print_diff_summary(diff_after)
 
@@ -46,15 +46,28 @@ def run(cmd: list, cwd: str) -> str:
     return result.stdout.rstrip()
 
 
-# Parse git status --porcelain output into raw lines
+# Parse git status --porcelain -z output into raw lines. -z prints paths verbatim (no
+# C-quoting of non-ASCII/backslash/quote/control chars) and NUL-terminates entries; rename
+# entries emit "to" then "from" (reversed vs. the ' -> ' text format), each NUL-terminated.
 def parse_status(repo_path: str) -> list[tuple[str, str]]:
-    raw = run(["git", "status", "--porcelain"], repo_path)
+    raw = run(["git", "status", "--porcelain", "-z"], repo_path)
+    tokens = raw.split("\0")
+    if tokens and tokens[-1] == "":
+        tokens.pop()
     lines = []
-    for line in raw.splitlines():
-        if line.strip():
-            xy = line[:2]
-            path = line[3:]
-            lines.append((xy, path))
+    i = 0
+    while i < len(tokens):
+        entry = tokens[i]
+        xy = entry[:2]
+        to_path = entry[3:]
+        if xy[0] in ("R", "C") or xy[1] in ("R", "C"):
+            i += 1
+            from_path = tokens[i]
+            path = f"{from_path} -> {to_path}"
+        else:
+            path = to_path
+        lines.append((xy, path))
+        i += 1
     return lines
 
 
@@ -162,24 +175,58 @@ def _extract_stage_path(path: str) -> str:
     return path
 
 
-# Stage all unstaged and untracked files (minus SKIP)
-def stage_all(repo_path: str, unstaged: list, untracked: list) -> list[str]:
+# Confirm expected paths actually landed in the index (git add's returncode alone is
+# insufficient defense-in-depth). Directory entries (trailing '/', from a brand-new untracked
+# folder collapsed to one status line) verify by prefix, since 'git diff --cached --name-only'
+# only ever lists individual files, never the directory itself.
+def verify_staged(repo_path: str, expected_paths: list[str]) -> list[str]:
+    raw = run(["git", "diff", "--cached", "--name-only", "-z"], repo_path)
+    staged_now = [p for p in raw.split("\0") if p]
+    missing = []
+    for path in expected_paths:
+        if path.endswith("/"):
+            if not any(p.startswith(path) for p in staged_now):
+                missing.append(path)
+        elif path not in staged_now:
+            missing.append(path)
+    return missing
+
+
+# Stage all unstaged and untracked files (minus SKIP). Returns (staged, errors) — a path only
+# lands in `staged` once its `git add` returncode AND the post-hoc index check both confirm it;
+# any other outcome is reported in `errors` instead of being silently treated as staged.
+def stage_all(repo_path: str, unstaged: list, untracked: list) -> tuple[list[str], list[str]]:
     paths_to_stage = [_extract_stage_path(p) for _, p in unstaged] + untracked
     if not paths_to_stage:
-        return []
+        return [], []
+    errors = []
+    attempted = []
     for path in paths_to_stage:
-        run(["git", "add", path], repo_path)
-    return paths_to_stage
+        result = subprocess.run(["git", "add", "--", path], capture_output=True, text=True, cwd=repo_path)
+        if result.returncode != 0:
+            errors.append(f"{path}: {(result.stderr or result.stdout).strip()}")
+        else:
+            attempted.append(path)
+    missing = verify_staged(repo_path, attempted)
+    for path in missing:
+        errors.append(f"{path}: git add reported success but path is missing from the staged index")
+    staged = [p for p in attempted if p not in missing]
+    return staged, errors
 
 
-# Print auto-staged files report
-def print_auto_stage_report(auto_staged: list[str]):
+# Print auto-staged files report, plus any staging errors (empty errors = today's output)
+def print_auto_stage_report(auto_staged: list[str], stage_errors: list[str] = None):
     _section("AUTO-STAGED")
     if auto_staged:
         for p in auto_staged:
             print(f"  {p}")
     else:
         print("  (nothing to stage)")
+
+    if stage_errors:
+        _section("STAGE ERRORS")
+        for e in stage_errors:
+            print(f"  {e}")
 
 
 # Print diff summary after staging

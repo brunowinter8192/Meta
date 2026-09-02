@@ -13,3 +13,4 @@ Development scripts for testing, debugging, and experimentation related to the i
 - [worker_janitor/DOCS.md](worker_janitor/DOCS.md) — `worker-cli janitor` stale-worker cleanup smoke test
 - [desktop_targeting/DOCS.md](desktop_targeting/DOCS.md) — space-move probe + report (`desktop_targeting/md/`)
 - [cc_hooks/DOCS.md](cc_hooks/DOCS.md) — CC hook-input inspection helpers
+- [git_automation/DOCS.md](git_automation/DOCS.md) — gcommit/git-check staging regression probes
