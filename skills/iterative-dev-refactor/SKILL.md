@@ -45,7 +45,7 @@ A split moves functions / constants / attributes to new modules. Post-implementa
 
 ### Step 3 — Control-Flow Integrity
 
-A branch that, on missing input or failure, PRODUCES alternative output by a second method is a **fallback** → eliminate. A branch that REFUSES to produce output and surfaces the failure (raise / flag / render-plain-with-marker) is a **tripwire** → keep, it is the cure. The classifying question per hit: does it produce derived output a second way (fallback), or refuse and surface (tripwire)? A cache-miss returning `None` is a tripwire, not a fallback.
+Fallback vs tripwire is DEFINED in the global testing rules (`shared-rules/global/testing.md` § Fallback and Tripwire) — that rule is the single source of the classifying question and the one-way-redesign pillars; this Step only carries the scan procedure. Classify every hit with the rule's question: does it produce derived output a second way (fallback → eliminate), or refuse and surface (tripwire → keep)?
 
 Three passes:
 
@@ -60,18 +60,14 @@ Three passes:
 read BOTH paths and confirm they derive the same value; for external/library behavior read the vendored source for the categorical answer (never infer from training knowledge); where cheap, confirm with a live probe (lsof, curl, one-shot call).
 
 **Consequence — a genuine fallback is NEVER auto-fixed; it goes through a One-Way Redesign, worked through WITH the user.**
-The redesign makes a SINGLE deterministic route produce the output — correctness guaranteed structurally, not guarded at runtime:
+The redesign makes a SINGLE deterministic route produce the output, per the pillars in the testing rule (completeness as a code property, safety check in a test over a real corpus, production runs one way). The procedure:
 
 1. **Record once at the source.**
    Capture the data at the point of truth with enough information (position, identity, order) that a single deterministic path produces the output later — no re-derivation downstream.
-2. **Completeness is a CODE property, not an INPUT property.**
-   Operations happen at a finite, enumerable set of code sites; completeness is verified across those sites, not hoped for at runtime.
-3. **Move the safety check from runtime to test.**
-   Replace the runtime fallback with a test-time invariant — `source + recorded operations == produced output` — asserted over a real corpus and kept as a CI regression. A failure there = a code site that forgot to record → fix the site.
-4. **Production runs one way.**
-   One deterministic route — no fallback, no dedup-patch, no "best-effort". Any retained tripwire refuses-and-surfaces; it never guesses.
-
-Validate the redesign in `dev/` before touching `src/`: build it as a `dev/` probe, prove exact equivalence on real data across ALL cases, THEN port to `src/` and delete the fallback chain. Never ship a runtime fallback "just in case" after a passing proof — at most a refuse-and-surface tripwire for genuinely-novel input.
+2. **Replace the runtime fallback with a test-time invariant.**
+   `source + recorded operations == produced output`, asserted over a real corpus and kept as a CI regression. A failure there = a code site that forgot to record → fix the site.
+3. **Validate in `dev/` before touching `src/`.**
+   Build the redesign as a `dev/` probe, prove exact equivalence on real data across ALL cases, THEN port to `src/` and delete the fallback chain.
 
 ## Phase 2 — Module Standards Conformance
 
