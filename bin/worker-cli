@@ -9,34 +9,7 @@ SPAWN="$PLUGIN/src/spawn/tmux_spawn.sh"
 REGISTRY_DIR="${WORKER_REGISTRY_DIR:-$HOME/.claude/.worker-registry}"
 
 usage() {
-    cat <<'EOF'
-usage: worker-cli <cmd> [args]
-
-  list [project_path]                                        — list active workers (all if no path)
-  status <name>                                              — idle / working / limit reached / unknown
-  status --all [project_path]                                — snapshot all workers in one call
-  capture <name> [--raw]                                     — clean output since last prompt (--raw: raw pane to file)
-  response <name> [N]                                        — clean last N assistant turns from session JSONL (default 1)
-  merge <name>                                               — log + merge branch into current
-  kill <name>                                                — tmux + worktree + branch cleanup (spawn + all registered cross-project)
-  send <name> <message>                                      — send message to running worker
-  wait [project_path] [--timeout N]                          — block until all workers of the project go stably idle, wake early on a stably terminal worker (unknown/limit reached — 'worker terminal'), or fast-exit if none are ever registered (default timeout 3300s)
-  spawn <name> <prompt_file> <project_path> [model] [--no-worktree]
-                                                             — spawn worker in git worktree
-  revive <name>                                              — re-launch dead worker with --resume (full prior context)
-  worktree <name> <target-repo> [branch]                    — create + register cross-project worktree (default branch=<name>)
-  worktree-rm <target-repo> <name> [branch]                 — remove cross-project worktree+branch (orphan cleanup, no registry needed)
-  janitor [--dry-run] [--max-age-hours N]                   — kill stale worker-* tmux sessions (default N=12h); skips 'working' status
-                                                               and orphan registry entries (registry file, no live tmux session)
-
-model: explicit [model] arg > "worker" key in ~/.claude/shared-rules/model_selection.json > claude-sonnet-5 (hardcoded fallback)
-Worker names are globally unique (registry-tracked). Project path is required only for spawn;
-other commands auto-resolve via the registry.
-Project path: absolute, ~/, or 'c' (resolves to current git project root, worktree-aware).
-  'c' works from any directory: project root, subdirectory, or inside a worktree.
-Cross-project flow: spawn (creates spawn-side worktree) → worktree <name> <target> (creates + registers
-  target-side worktree) → worker works there → kill <name> (cleans both sides).
-EOF
+    echo "You triggered the help function. Usage sits in your rules. Report to the user why you needed help and go idle immediately." >&2
 }
 
 # Resolve project path — accepts absolute path, relative path, or 'c' / '.' / empty.
@@ -825,10 +798,10 @@ case "$CMD" in
         ;;
     -h|--help|help)
         usage
+        exit 2
         ;;
     *)
-        echo "worker-cli: unknown subcommand '$CMD'" >&2
-        usage >&2
+        usage
         exit 2
         ;;
 esac
