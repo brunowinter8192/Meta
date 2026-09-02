@@ -542,34 +542,32 @@ case "$CMD" in
         START_TS=$(date +%s)
         STABLE_COUNT=0
         EMPTY_COUNT=0
+        # Transition-gate flag (2026-xx): `wait` may only exit "workers idle"/"worker
+        # terminal" once THIS invocation has observed a real "working" poll — an idle-at-arm
+        # or never-registered worker must never look like a finished transition. Level-
+        # triggered exits on a bare state (armed already-idle, armed on zero workers) were
+        # waking the orchestrator for nothing; only an actual working->non-blocking edge
+        # matters now.
+        SAW_WORKING=0
         while true; do
             NOW=$(date +%s)
             ELAPSED=$((NOW - START_TS))
             if [ "$ELAPSED" -ge "$TIMEOUT" ]; then
-                _wait_trace "$_WAIT_TRACE_TAG event=exit reason=timeout elapsed=$ELAPSED"
+                _wait_trace "$_WAIT_TRACE_TAG event=exit reason=timeout elapsed=$ELAPSED saw_working=$SAW_WORKING"
                 echo "timeout"
                 exit 0
             fi
             # Best-effort listing — any failure (tmux hiccup, etc.) yields empty NAMES,
-            # which is handled identically to "no worker visible yet": keep waiting. An empty
-            # streak is itself now a stabilizable state (see EMPTY_COUNT below) — same grace
-            # window as the idle-transition case, not a separate new threshold.
+            # which is handled identically to "no worker visible yet": keep waiting. Zero
+            # workers is just another non-exiting state (the old "no workers" fast-exit is
+            # removed entirely — same reasoning as the transition gate above: a state, not a
+            # transition, must never end `wait` on its own) — keep polling through it.
             NAMES=$(bash -c "source \"$SPAWN\" && worker_list \"\$1\"" _ "$PROJECT" 2>/dev/null \
                 | awk '{print $1}' || true)
             if [ -z "$NAMES" ]; then
                 STABLE_COUNT=0
                 EMPTY_COUNT=$((EMPTY_COUNT + 1))
                 _wait_trace "$_WAIT_TRACE_TAG event=decision empty=1 empty_count=$EMPTY_COUNT elapsed=$ELAPSED"
-                # Zero workers visible for _WAIT_STABLE_SAMPLES consecutive polls (same 5s-poll/
-                # 3-sample window already trusted for the idle transition) -> exit fast instead of
-                # grinding to the full timeout. The grace window (not an immediate exit) absorbs a
-                # spawn-registration race: a worker appearing mid-window resets EMPTY_COUNT to 0
-                # below and falls through to normal idle-tracking, no special-casing needed.
-                if [ "$EMPTY_COUNT" -ge "$_WAIT_STABLE_SAMPLES" ]; then
-                    _wait_trace "$_WAIT_TRACE_TAG event=exit reason=no_workers elapsed=$ELAPSED"
-                    echo "no workers"
-                    exit 0
-                fi
                 sleep "$_WAIT_POLL_INTERVAL"
                 continue
             fi
@@ -588,16 +586,25 @@ case "$CMD" in
                 # unrecognized status fall through to the default arm and stay blocking —
                 # fail-toward-waiting is preserved for anything not explicitly whitelisted here.
                 case "$STATUS" in
+                    working)
+                        # Verbatim "working" is the ONLY status that arms the transition gate —
+                        # any future/unrecognized status (default arm below) stays blocking too,
+                        # but must not count as proof of real work.
+                        SAW_WORKING=1
+                        _wait_trace "$_WAIT_TRACE_TAG event=poll worker=$WNAME status=working bg=- class=busy saw_working=$SAW_WORKING"
+                        ALL_NONBLOCKING=0
+                        break
+                        ;;
                     idle)
                         # Only a verbatim "idle" gets the bg-task probe — a worker still
                         # coordinating a background task isn't really done.
                         BG=$(_wait_has_live_bg_task "$WNAME" "$PROJECT")
                         if [ "$BG" != "no" ]; then
-                            _wait_trace "$_WAIT_TRACE_TAG event=poll worker=$WNAME status=idle bg=$BG class=busy"
+                            _wait_trace "$_WAIT_TRACE_TAG event=poll worker=$WNAME status=idle bg=$BG class=busy saw_working=$SAW_WORKING"
                             ALL_NONBLOCKING=0
                             break
                         fi
-                        _wait_trace "$_WAIT_TRACE_TAG event=poll worker=$WNAME status=idle bg=no class=idle"
+                        _wait_trace "$_WAIT_TRACE_TAG event=poll worker=$WNAME status=idle bg=no class=idle saw_working=$SAW_WORKING"
                         ;;
                     "limit reached"|unknown)
                         # Terminal: the coordinating claude process is presumed gone/stuck and
@@ -610,10 +617,10 @@ case "$CMD" in
                         # change fixes. An orphaned bg process surviving its dead coordinator
                         # doesn't change that the orchestrator must intervene either way.
                         ANY_TERMINAL=1
-                        _wait_trace "$_WAIT_TRACE_TAG event=poll worker=$WNAME status=${STATUS// /_} bg=- class=terminal"
+                        _wait_trace "$_WAIT_TRACE_TAG event=poll worker=$WNAME status=${STATUS// /_} bg=- class=terminal saw_working=$SAW_WORKING"
                         ;;
                     *)
-                        _wait_trace "$_WAIT_TRACE_TAG event=poll worker=$WNAME status=${STATUS// /_} bg=- class=busy"
+                        _wait_trace "$_WAIT_TRACE_TAG event=poll worker=$WNAME status=${STATUS// /_} bg=- class=busy saw_working=$SAW_WORKING"
                         ALL_NONBLOCKING=0
                         break
                         ;;
@@ -625,13 +632,13 @@ case "$CMD" in
                 STABLE_COUNT=0
             fi
             _wait_trace "$_WAIT_TRACE_TAG event=decision all_nonblocking=$ALL_NONBLOCKING any_terminal=$ANY_TERMINAL stable_count=$STABLE_COUNT elapsed=$ELAPSED"
-            if [ "$STABLE_COUNT" -ge "$_WAIT_STABLE_SAMPLES" ]; then
+            if [ "$STABLE_COUNT" -ge "$_WAIT_STABLE_SAMPLES" ] && [ "$SAW_WORKING" = "1" ]; then
                 if [ "$ANY_TERMINAL" = "1" ]; then
-                    _wait_trace "$_WAIT_TRACE_TAG event=exit reason=worker_terminal elapsed=$ELAPSED"
+                    _wait_trace "$_WAIT_TRACE_TAG event=exit reason=worker_terminal elapsed=$ELAPSED saw_working=$SAW_WORKING"
                     echo "worker terminal"
                     exit 0
                 fi
-                _wait_trace "$_WAIT_TRACE_TAG event=exit reason=workers_idle elapsed=$ELAPSED"
+                _wait_trace "$_WAIT_TRACE_TAG event=exit reason=workers_idle elapsed=$ELAPSED saw_working=$SAW_WORKING"
                 echo "workers idle"
                 exit 0
             fi
