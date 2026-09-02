@@ -8,9 +8,14 @@
 #
 # Routing:
 #   - .md / .markdown / .txt → CotEditor (regardless of system default)
+#   - .pdf → macOS default app via `open`, but on a REFRESHED, READ-ONLY COPY, never
+#     the original — Preview re-encodes a PDF on open (autosave/versions), which
+#     mutates the original file in place; a copy is the only barrier that holds.
 #   - everything else → macOS default app via `open`
 
 set -e
+
+SHOW_COPY_DIR="${TMPDIR:-/tmp}/show-copies"
 
 if [ $# -lt 1 ]; then
   echo "Usage: show <file> [file...]" >&2
@@ -29,14 +34,35 @@ for f in "$@"; do
 
   # Extension-based routing (text formats → CotEditor)
   ext_lower="$(echo "${f##*.}" | tr '[:upper:]' '[:lower:]')"
+  copy_note=""
   case "$ext_lower" in
     md|markdown|txt)
       open -a "CotEditor" "$f"
+      ;;
+    pdf)
+      # Copy dir is keyed by a hash of the absolute source path — deterministic per
+      # source, so a second `show` of the same file reuses the same copy path (same
+      # viewer document). The copy itself keeps the ORIGINAL basename so Preview's
+      # title bar still shows the real filename.
+      if command -v md5 >/dev/null 2>&1; then
+        src_hash=$(printf '%s' "$f" | md5 | head -c 12)
+      else
+        src_hash=$(printf '%s' "$f" | md5sum | head -c 12)
+      fi
+      copy_dir="$SHOW_COPY_DIR/$src_hash"
+      mkdir -p "$copy_dir"
+      copy_path="$copy_dir/$(basename "$f")"
+      # cp -f on a read-only destination removes + recreates it (BSD cp semantics) —
+      # no separate chmod-writable step needed before refreshing an existing copy.
+      cp -f "$f" "$copy_path"
+      chmod 444 "$copy_path"
+      open "$copy_path"
+      copy_note=" (copy: $copy_path)"
       ;;
     *)
       open "$f"
       ;;
   esac
 
-  echo "opened: $f"
+  echo "opened: $f$copy_note"
 done
