@@ -499,7 +499,28 @@ case "$CMD" in
         git -C "$PROJECT" log "$CURRENT".."$NAME" --oneline -- || true
         echo
         echo "=== Merging $NAME into $CURRENT ==="
-        git -C "$PROJECT" merge "$NAME" --no-ff -m "merge: worker $NAME"
+        MERGE_OUT=$(git -C "$PROJECT" merge "$NAME" --no-ff -m "merge: worker $NAME")
+        echo "$MERGE_OUT"
+        # Loud, deterministic outcome check (2026, retired the orchestrator's by-hand
+        # post-merge verification) — "Already up to date." means the branch carried zero
+        # commits into $CURRENT; the two known causes are a cross-project worker merged
+        # without its project_path (branch lives in the other repo) and a worker that
+        # never committed.
+        if [[ "$MERGE_OUT" == *"Already up to date"* ]]; then
+            echo "worker-cli merge: branch '$NAME' carried no commits into '$CURRENT' — merge was a no-op. Likely causes: (1) a cross-project worker merged without its project_path (the branch lives in the other repo), (2) the worker never committed." >&2
+            exit 1
+        fi
+        # ORIG_HEAD is the pre-merge tip of $CURRENT — a diff against it covers every
+        # commit the merge brought in, unlike HEAD~1 which would miss earlier commits on
+        # a multi-commit branch.
+        FILES=$(git -C "$PROJECT" diff ORIG_HEAD --name-only)
+        if [ -z "$FILES" ]; then
+            echo "worker-cli merge: merge completed but brought in no file changes (git diff ORIG_HEAD --name-only was empty)" >&2
+            exit 1
+        fi
+        echo
+        echo "=== Files merged ==="
+        echo "$FILES"
         ;;
     kill)
         [ $# -lt 1 ] && { echo "worker-cli kill: need <name> [project_path]" >&2; exit 2; }
