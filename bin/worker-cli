@@ -499,8 +499,17 @@ case "$CMD" in
         git -C "$PROJECT" log "$CURRENT".."$NAME" --oneline -- || true
         echo
         echo "=== Merging $NAME into $CURRENT ==="
+        # set +e around the merge itself: under this script's set -e, a failing
+        # assignment (`VAR=$(cmd)` where cmd exits non-zero — a real conflict) would abort
+        # BEFORE the echo below ever ran, swallowing git's own conflict output. Capture the
+        # exit code explicitly instead and echo the output unconditionally, so a conflict
+        # is exactly as visible as it was before this command captured anything.
+        set +e
         MERGE_OUT=$(git -C "$PROJECT" merge "$NAME" --no-ff -m "merge: worker $NAME")
+        MERGE_RC=$?
+        set -e
         echo "$MERGE_OUT"
+        [ "$MERGE_RC" -ne 0 ] && exit "$MERGE_RC"
         # Loud, deterministic outcome check (2026, retired the orchestrator's by-hand
         # post-merge verification) — "Already up to date." means the branch carried zero
         # commits into $CURRENT; the two known causes are a cross-project worker merged

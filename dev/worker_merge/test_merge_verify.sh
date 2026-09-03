@@ -98,8 +98,44 @@ else
     check "stderr names both known causes" "missing from stderr"
 fi
 
+# ── Case 3: real conflict — git's own conflict output must reach the caller ──
+echo ""
+echo "=== Case 3: merge a branch that conflicts with main ==="
+
+git -C "$TMPPROJ" checkout -q -b conflict1
+echo "conflict-from-branch" > "$TMPPROJ/a.txt"
+git -C "$TMPPROJ" add a.txt
+git -C "$TMPPROJ" commit -q -m "conflict1 commit"
+git -C "$TMPPROJ" checkout -q main
+echo "conflict-from-main" > "$TMPPROJ/a.txt"
+git -C "$TMPPROJ" add a.txt
+git -C "$TMPPROJ" commit -q -m "main-side conflicting change"
+
+OUT3=$("$WCLI" merge conflict1 "$TMPPROJ" 2>/tmp/merge_case3_err.txt)
+RC3=$?
+ERR3=$(cat /tmp/merge_case3_err.txt)
+echo "  stdout:"
+echo "$OUT3" | sed 's/^/    /'
+echo "  stderr: $ERR3"
+echo "  rc: $RC3"
+git -C "$TMPPROJ" merge --abort 2>/dev/null || true
+
+[ "$RC3" -ne 0 ] && check "exit code non-zero" "ok" || check "exit code non-zero" "rc=$RC3"
+
+if echo "$OUT3" | grep -qF "CONFLICT"; then
+    check "git's conflict text reaches stdout" "ok"
+else
+    check "git's conflict text reaches stdout" "missing from stdout"
+fi
+
+if echo "$OUT3" | grep -qF "=== Files merged ==="; then
+    check "'=== Files merged ===' NOT printed on conflict" "printed despite conflict"
+else
+    check "'=== Files merged ===' NOT printed on conflict" "ok"
+fi
+
 # ── Summary ───────────────────────────────────────────────────────────────────
-rm -f /tmp/merge_case1_err.txt /tmp/merge_case2_err.txt
+rm -f /tmp/merge_case1_err.txt /tmp/merge_case2_err.txt /tmp/merge_case3_err.txt
 echo ""
 echo "=== Summary ==="
 echo "  PASS: $pass"
