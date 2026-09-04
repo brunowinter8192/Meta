@@ -5,34 +5,17 @@ description:
 
 # Dual-Log Reading — Skill
 
-**The dual_log is the byte-level record of every CC session — read it ONLY through the CLI.**
-Invocation: `duallog <command>` (in PATH; runs the monitor-cc main checkout).
-
 ## Commands
 
-| Command | Args |
-|---|---|
-| sessions | [context] [--since YYYY-MM-DD] [--until YYYY-MM-DD] |
-| msgs | session [from] [to] |
-| expand | session msg [--before N] [--after N] [--only classifier] |
-| search | term [scope] [--since YYYY-MM-DD] [--until YYYY-MM-DD] [--only classifier] [--case-sensitive] |
+| Command | Args | Does |
+|---|---|---|
+| sessions | [context] [--since YYYY-MM-DD] [--until YYYY-MM-DD] | List sessions, newest first; context filters by project/worker substring |
+| msgs | session [from] [to] \| --req F [T] | One classifier line per msg, grouped by request |
+| expand | session msg [--before N] [--after N] [--only classifier] | Full content of one msg and the window around it |
+| search | term [scope] [--since YYYY-MM-DD] [--until YYYY-MM-DD] [--only classifier] [--case-sensitive] | Find a term across sessions, each hit once; scope matches context or session name |
+| reqs | [scope] [--since YYYY-MM-DD] [--until YYYY-MM-DD] [--main \| --worker] [--gap MINUTES] [--merged] [--rebuild] [--drop] | One REQ number + time per line, per session; scope matches context or session name; --main/--worker keep only opus/ or worker/ sessions; --gap shows only the REQs bracketing a consecutive gap of at least MINUTES (after-REQ carries `+Nm`; no qualifying gap prints only the session line); --merged combines every session in scope into one chronological REQ chain (each line tagged by worker/project) instead of one listing per session — the prompt cache is shared across a project's workers, so --gap on a merged chain evaluates the gap that actually matters for cache health; --rebuild keeps only REQs where CC > CR, --drop keeps only REQs whose predecessor's cached prefix was not fully read back (CR(n) < CR(n-1)+CC(n-1), REQ 1 of a chain never qualifies) — both carry a `CR c  CC c` tail (--drop also a `−N` shortfall), combine with each other (AND), with --gap (filtering the lines --gap would print), and with --merged (predecessor is then the merged chain's, across sessions) |
 
-`--only` takes a role (`user`), a block type (`tool_result`), or a role/type pair (`user/text`) — a msg is selected when its role matches and ANY of its blocks matches the type, and a selected msg always shows ALL its blocks.
-
-## Reading `msgs`
-
-```
-── REQ n  HH:MM:SS  CR c  CC c ──
-        sys[i] chars  changed|new
-        tool[Name] chars  changed|new
-        tool[Name]  removed
-[N] role type chars  −S +I → Wc
-        block-label chars  −S +I → Wc
-```
-
-- The separator carries the request's response usage: CR = `cache_read_input_tokens`, CC = `cache_creation_input_tokens`, joined from CC's transcript. A separator without CR/CC means the join did not resolve (errored request, live-session lag, or no transcript record). REQ numbers match the proxy pane's `#N`.
-- Under the separator, the system blocks and tools the request sent on the wire: all of them on the family's first request, afterwards only those whose content `changed`, which are `new`, or which were `removed` against the previous conversation request. Tools are compared by name, so a tool that only shifted position prints nothing. No sys/tool line means the prefix did not change there. A zero-tool sidecar call (the "security monitor" request) is excluded from REQ numbering like haiku. `sys[0]` is the per-request billing header and is listed on the first request only.
-- Chars are the ORIGINAL payload's. A msg or block the proxy transformed carries a tail `−S +I → Wc`: chars stripped, chars injected, resulting wire size (what actually reached the API). ` by REQ n` is appended only when a later request than the group's own did the transform. An untouched line has no tail.
+`--only` (expand, search) takes a role (`user`), a block type (`tool_result`), or a role/type pair (`user/text`); a msg is selected when its role matches and ANY block matches the type, and it always shows ALL its blocks.
 
 ## Classifiers
 
