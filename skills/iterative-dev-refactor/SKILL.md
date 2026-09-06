@@ -5,77 +5,99 @@ description:
 
 # Refactor Scan
 
-**Opus checks, workers only fix.**
-Opus runs every scan and classification itself — AST walk, grep, or `wc`, whichever fits — and decides what changes. The worker NEVER checks or scans; it receives ONE concrete refactor and implements it.
+## Core Rules
+
+**Opus scans, workers fix.**
+- Opus runs every scan and every classification itself, by AST walk, grep, or `wc`.
+- The worker never scans and never classifies.
+- The worker receives one concrete refactor and implements it.
 
 **One Step at a time.**
-Per Step: run its scan → dispatch the fix through workers (one worker per coherent unit, never bundle unrelated refactors) → evaluate the worker's plan against your own model → Go → review the diff → recap → merge. Step N's fix is merged before Step N+1 starts. Never scan ahead.
+- Per Step: scan, dispatch, evaluate the worker's plan, Go, review the diff, recap, merge.
+- One worker per coherent unit, never a bundle of unrelated refactors.
+- Step N is merged before Step N+1 is scanned.
 
-**Run autonomously — report once.**
-No user stop between Steps; drive the run end-to-end and give ONE consolidated prose summary at the very end (per Step: what was found, what was refactored + merged). Every report is written in German; all artifacts (code, DOCS.md) stay English.
+**The run is autonomous and reports once.**
+- No user stop between Steps.
+- One consolidated summary at the end, per Step: what was found, what was refactored and merged.
+- The summary is German, every artifact stays English.
 
 **Thresholds are fixed.**
-The numbers below are exact — never soften one to fit a project; only the way you write the scan adapts. Cosmetic LOC shrinking (trimming blanks, merging comments) is never a split.
+- No number below is softened to fit a project.
+- Cosmetic LOC shrinking is never a split.
 
 ## Scope
 
-ASK the user which directory to refactor (the source root — `src/` or a chosen subtree).
+**The user names the directory.**
+- Ask for the source root or a chosen subtree before the first scan.
 
 ## Phase 1 — Architectural Form
 
 ### Step 1 — Placement
 
-Is every top-level module in the right place? A `src/*.py` at the root (skip `__init__`) is justified only if ≥2 subdirectories import it OR an external entry-point loads it (`python -m x`, a uvicorn `x:app` path, `mitmproxy -s`). Imported by a single subdir with no entry-point → move it into that subdir.
+**A root-level module stays at the root only with a justification.**
+- Justification is import by two or more subdirectories, or load by an external entry point.
+- A module imported by a single subdirectory without an entry point moves into that subdirectory.
+- `__init__.py` is skipped.
 
-### Step 2 — Cohesion & Concern-Splitting
+### Step 2 — Cohesion and Concern-Splitting
 
-Does one place carry too much and want to split?
+**File size.**
+- Over 400 LOC is a split.
+- 300 to 400 LOC is a watch.
+- Largest first.
 
-- **File size.**
-  >400 LOC = hard (split); 300–400 = watch. Largest first.
-- **Function size.**
-  ≥50 LOC = extract a helper; ≥100 = hard target. Longest first, with file:line.
-- **Class state.**
-  ≥10 distinct `self.<attr>` (plain + annotated) → split by concern.
-- **Constant clustering.**
-  Per module, group top-level UPPER_CASE constants by leading `PREFIX_` token; a prefix with ≥3 constants is a cluster; ≥2 clusters in one file → split, each cluster its own module.
+**Function size.**
+- 50 LOC or more extracts a helper.
+- 100 LOC or more is a hard target.
+- Longest first, reported with file and line.
 
-**Consequence — any split relocates symbols, so the worker re-points every reference before recap.**
-A split moves functions / constants / attributes to new modules. Post-implementation, before recap, the worker greps EVERY reference to each moved symbol and confirms it resolves to the new access path. Whitelist names deliberately left in place.
+**Class state.**
+- Ten or more distinct `self.<attr>` splits the class by concern.
+
+**Constant clustering.**
+- Top-level UPPER_CASE constants are grouped by leading `PREFIX_` token.
+- A prefix with three or more constants is a cluster.
+- Two or more clusters in one file split, one module per cluster.
+
+**A split re-points every reference before recap.**
+- The worker greps every reference to each moved symbol and confirms the new access path.
+- Names deliberately left in place are whitelisted in the recap.
 
 ### Step 3 — Control-Flow Integrity
 
-Fallback vs tripwire is DEFINED in the global testing rules (`shared-rules/global/testing.md` § Fallback and Tripwire) — that rule is the single source of the classifying question and the one-way-redesign pillars; this Step only carries the scan procedure. Classify every hit with the rule's question: does it produce derived output a second way (fallback → eliminate), or refuse and surface (tripwire → keep)?
+**The classifying question comes from the global testing rule.**
+- A branch that produces derived output a second way is a fallback and is eliminated.
+- A branch that refuses and surfaces the failure is a tripwire and stays.
 
-Three passes:
+**Three passes.**
+- Textual: grep comments and names for `fallback`, `legacy path`, `old path`, `best-effort`, `backward-compat`, and function names containing `fallback`, `legacy`, `dedup`, `gated`.
+- Structural: AST for `except` handlers that return a non-`None` value without re-raising.
+- Cross-module, manual: one value or effect derived or read in two or more places that can diverge.
 
-- **Pass 1 — Textual:**
-  grep comments and names for `fallback`, `legacy path`, `old path`, `best-effort`, `backward-compat`, and function names containing `fallback` / `legacy` / `dedup` / `gated`.
-- **Pass 2 — Structural (AST):**
-  `except` handlers that return a non-`None` value without re-raising — an `except` that produces output instead of surfacing failure.
-- **Pass 3 — Cross-module (manual — the AST pass misses this):**
-  one conceptual value or effect derived/read in ≥2 places that can diverge. Patterns: two periodic loops doing the same op; one value read from two sources (idle from two mtimes; "is X running" from state-file vs port-scan vs process-scan); the same op in two places with divergent behavior; a hardcoded default consulted when the canonical source is absent; a sentinel `if <key> in x: <new> else: <old>`.
+**Verification precedes classification.**
+- Both paths are read and confirmed to derive the same value.
+- Library behavior is read in the vendored source, never inferred.
+- Where cheap, a live probe confirms it.
 
-**Verify at the source before classifying:**
-read BOTH paths and confirm they derive the same value; for external/library behavior read the vendored source for the categorical answer (never infer from training knowledge); where cheap, confirm with a live probe (lsof, curl, one-shot call).
+**A genuine fallback is never auto-fixed.**
+- It goes through a one-way redesign with the user.
+- The redesign makes one deterministic route produce the output.
 
-**Consequence — a genuine fallback is NEVER auto-fixed; it goes through a One-Way Redesign, worked through WITH the user.**
-The redesign makes a SINGLE deterministic route produce the output, per the pillars in the testing rule (completeness as a code property, safety check in a test over a real corpus, production runs one way). The procedure:
-
-1. **Record once at the source.**
-   Capture the data at the point of truth with enough information (position, identity, order) that a single deterministic path produces the output later — no re-derivation downstream.
-2. **Replace the runtime fallback with a test-time invariant.**
-   `source + recorded operations == produced output`, asserted over a real corpus and kept as a CI regression. A failure there = a code site that forgot to record → fix the site.
-3. **Validate in `dev/` before touching `src/`.**
-   Build the redesign as a `dev/` probe, prove exact equivalence on real data across ALL cases, THEN port to `src/` and delete the fallback chain.
+**One-way redesign procedure.**
+- Record once at the source, with position, identity, and order.
+- Replace the runtime fallback with a test-time invariant over a real corpus, kept as a regression.
+- Validate in `dev/` on real data across all cases, then port and delete the fallback chain.
 
 ## Phase 2 — Module Standards Conformance
 
-The worker coding standard (`shared-rules/worker/code-standards`) defines how a single module is written. Opus does NOT get it in context — READ it each run, extract the concrete standards, and check every module against them. A module that deviates from a standard → dispatch a worker to bring it into conformance.
+**The worker code standard is read each run.**
+- Opus reads `shared-rules/worker/code-standards`, extracts the concrete standards, and checks every module.
+- A deviating module gets a worker.
 
-**Docstrings and documenting comments are removed.**
-- Every module, class, and function docstring is a violation.
-- Every comment line is a violation, except the shebang and the three section markers.
+**Docstrings and comments are violations.**
+- Every module, class, and function docstring.
+- Every comment line except the shebang and the three section markers.
 
 **Opus scans per file.**
 - `ast.get_docstring` on the module node and on every `FunctionDef`, `AsyncFunctionDef`, `ClassDef`.
@@ -94,4 +116,8 @@ The worker coding standard (`shared-rules/worker/code-standards`) defines how a 
 
 ## Phase 3 — Doc-Drift Check
 
-Refactor workers update the touched DOCS.md alongside their code change as they go. At the very END — after every Step's fix is merged — run `docs-drift-check` (cwd) ONCE. Clean → done. Residual drift → fix it (worker), then done.
+**Workers update the touched DOCS.md with their change.**
+
+**One drift check closes the run.**
+- After the last merge, `docs-drift-check` runs once in the cwd.
+- Residual drift goes to a worker, then the run is done.
