@@ -73,12 +73,23 @@ The redesign makes a SINGLE deterministic route produce the output, per the pill
 
 The worker coding standard (`shared-rules/worker/code-standards`) defines how a single module is written. Opus does NOT get it in context — READ it each run, extract the concrete standards, and check every module against them. A module that deviates from a standard → dispatch a worker to bring it into conformance.
 
-**Comments.**
-Only the three comment types code-standards allows survive (section markers, one-line function headers, cross-module import comments). Every other comment is a violation — triage its content before deleting:
+**Docstrings and comments — the code is self-documenting; prose does not live in it.**
+Every module, class, and function docstring is removed. Every comment that documents code — what a function does, why a value was chosen, what was tried, which paper grounds it — is removed. The only comment lines that survive are section markers (`# INFRASTRUCTURE`, `# ORCHESTRATOR`, `# FUNCTIONS`) and cross-module import annotations on `import` lines. A one-line function header is a documenting comment and goes too; the function's name carries that.
 
-- Substance recorded nowhere else (derivation, measurement, trade-off, source citation) → write it into a NEW dated `process-docs/<area>/` entry of the area the value belongs to.
+Scan (Opus runs it, per file, AST + line walk):
+
+- `ast.get_docstring` on the module node and on every `FunctionDef` / `AsyncFunctionDef` / `ClassDef` → every hit is a violation; report file, node name, docstring line count.
+- Every line whose stripped form starts with `#`, excluding the shebang, the three section markers, and inline annotations on `import` lines → violation; report file:line and the comment's first 80 chars.
+- Sort files by total violation lines, largest first; that is the dispatch order.
+
+Triage every hit's CONTENT before deleting — nothing of substance is lost, it is relocated:
+
+- Substance recorded nowhere else (derivation, measurement, trade-off, source citation, the reason a constant has its value) → write it into a NEW dated `process-docs/<area>/` entry of the area the value belongs to. One entry per module cleaned, titled as a comment-migration entry, so the reader knows where the prose went.
 - A guard on a calibrated value ("do not change without evidence") → one line in the module's `DOCS.md` Gotchas.
+- A module's purpose, reads, writes, callers, and grounding entry → the module's `DOCS.md` entry, which is the ONLY place that description lives.
 - Content already covered by process-docs or `DOCS.md` → delete outright.
+
+The worker receives the scan's hit list for ONE module plus the triage of every hit (which target, or delete), written by Opus. The worker relocates and deletes; it does not decide. Re-scan after merge: zero hits, or the Step is not closed.
 
 ## Phase 3 — Doc-Drift Check
 
