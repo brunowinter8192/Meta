@@ -75,7 +75,7 @@ The worker coding standard (`shared-rules/worker/code-standards`) defines how a 
 
 **Docstrings and documenting comments are removed.**
 - Every module, class, and function docstring is a violation.
-- Every comment line is a violation, except the shebang, the three section markers, and cross-module import annotations.
+- Every comment line is a violation, except the shebang and the three section markers.
 
 **Opus scans per file.**
 - `ast.get_docstring` on the module node and on every `FunctionDef`, `AsyncFunctionDef`, `ClassDef`.
